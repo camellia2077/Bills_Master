@@ -1,4 +1,3 @@
-#修改菜单交互逻辑
 import sqlite3
 import re
 import time
@@ -53,7 +52,8 @@ def create_database():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS YearMonth (
                 id INTEGER PRIMARY KEY,
-                year_month TEXT UNIQUE NOT NULL
+                year_month TEXT UNIQUE NOT NULL,
+                remark TEXT
             )''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS Parent (
@@ -95,6 +95,7 @@ def parse_and_insert_file(file_path, conn):
     child_order_map = {}
     item_order_map = {}
     items_batch = []
+    expect_remark = False  # 用于标记是否期待处理 REMARK:
 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -103,11 +104,21 @@ def parse_and_insert_file(file_path, conn):
                 if not stripped_line:
                     continue
 
-                if stripped_line.startswith('DATE'):
+                # 处理 REMARK: 行（仅在 DATE: 之后）
+                if expect_remark:
+                    if stripped_line.startswith('REMARK:'):
+                        remark = stripped_line[7:].strip()  # 提取 REMARK: 后的内容
+                        cursor.execute('UPDATE YearMonth SET remark = ? WHERE year_month = ?', (remark, year_month))
+                        expect_remark = False
+                        continue
+                    else:
+                        expect_remark = False  # 如果不是 REMARK:，取消期待，继续处理当前行
+
+                if stripped_line.startswith('DATE:'):  # 修改为识别 DATE:
                     if items_batch:
                         cursor.executemany(ITEM_UPSERT, items_batch)
                         items_batch = []
-                    year_month = stripped_line[4:]
+                    year_month = stripped_line[5:].strip()  # 从第5个字符开始提取年月，去除空格
                     cursor.execute(YEAR_MONTH_INSERT, (year_month,))
                     cursor.execute(YEAR_MONTH_SELECT, (year_month,))
                     result = cursor.fetchone()
@@ -116,7 +127,8 @@ def parse_and_insert_file(file_path, conn):
                     child_order_map.clear()
                     item_order_map.clear()
                     current_parent_id = current_child_id = None
-
+                    expect_remark = True  # 设置为期待 REMARK:
+                
                 elif year_month_id:
                     if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+$', stripped_line):
                         if items_batch:
