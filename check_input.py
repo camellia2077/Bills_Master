@@ -2,9 +2,13 @@ import os
 import re
 import time
 from collections import defaultdict
+#ANSI转义码_颜色代码
+RED = "\033[31m"
+GREEN = "\033[32m"
+RESET = "\033[0m"  # 重置颜色
 
 def read_and_preprocess(file_path):
-    """读取文件并预处理行"""
+    """逐行读取文件并预处理行"""
     with open(file_path, 'r', encoding='utf-8') as f:
         return [
             (lineno, line.strip())
@@ -22,12 +26,12 @@ def validate_date_and_remark(lines):
     # 验证DATE行
     date_lineno, date_line = lines[0]
     if not re.fullmatch(r'^DATE:\d{6}$', date_line):
-        errors.append((date_lineno, "DATE格式错误，必须为DATE:后接6位数字"))
+        errors.append((date_lineno, "DATE格式错误,必须为DATE:后接6位数字"))
     
     # 验证REMARK行
     remark_lineno, remark_line = lines[1]
     if not re.fullmatch(r'^REMARK:.*$', remark_line):
-        errors.append((remark_lineno, "REMARK格式错误，必须为REMARK:开头"))
+        errors.append((remark_lineno, "REMARK格式错误,必须为REMARK:开头"))
     
     return errors
 
@@ -39,7 +43,7 @@ def handle_parent_state(line, lineno, state):
         state['current_parent'] = new_parent
         state['expecting'] = 'sub'
         return []
-    return [(lineno, "期望父级标题，但找到其他内容")]
+    return [(lineno, "期望父级标题,但找到其他内容")]
 
 def handle_sub_state(line, lineno, state):
     """处理子标题状态"""
@@ -168,18 +172,19 @@ def validate_file(file_path):
 
 def print_result(file_path, result):
     """打印验证结果"""
-    print(f"\n目录: {os.path.dirname(file_path)}")
-    print(f"文件名: {os.path.basename(file_path)}")
-    print(f"处理行数: {result['processed_lines']}")
-    print(f"运行时间: {result['time']:.6f}秒")
-    
+    filename = os.path.basename(file_path)
     if not result['errors']:
-        print("校验通过")
+        print(f"{GREEN}{filename} 校验通过{RESET}")
     else:
-        print("校验失败，错误详情:")
+        print(f"{RED}校验失败,错误详情:{RESET}")
         for err in result['errors']:
             print(f"第 {err[0]} 行: {err[1]}")
-
+    #print(f"\n目录: {os.path.dirname(file_path)}")
+    print(f"运行时间: {result['time']:.6f}秒")
+    print(f"文件名: {filename} 处理行数: {result['processed_lines']}")
+    print("\n")
+    
+    
 def process_path(path):
     """处理路径（文件或目录）"""
     if os.path.isdir(path):
@@ -190,7 +195,7 @@ def process_path(path):
     elif os.path.isfile(path):
         process_single_file(path)
     else:
-        print("无效路径")
+        print(f"{RED}无效路径{RESET}")
 
 def process_single_file(file_path):
     """处理单个文件"""
@@ -198,12 +203,13 @@ def process_single_file(file_path):
         print_result(file_path, validate_file(file_path))
     except Exception as e:
         print(f"\n目录: {os.path.dirname(file_path)}")
-        print(f"文件名: {os.path.basename(file_path)} 处理失败，原因: {str(e)}")
+        print(f"文件名: {os.path.basename(file_path)} 处理失败,原因: {str(e)}")
+        
 
 def main():
     """主函数"""
     while True:
-        path = input("请输入文件或目录路径：").strip()
+        path = input("请输入文件或目录路径:").strip()
         process_path(path)
 
 if __name__ == "__main__":
