@@ -213,8 +213,8 @@ def parse_and_insert_file(file_path, conn, enable_auto_renewal):
                             # --- **核心修改:自动续费处理 (数据库 & TXT)** ---
                             if enable_auto_renewal and stripped_line in AUTO_RENEWAL_MAP:
                                 amount, description = AUTO_RENEWAL_MAP[stripped_line]
-                                auto_renewal_desc_db = description + " (自动续费)"
-                                auto_renewal_desc_txt = description + " (自动续费)" # TXT也加标记
+                                auto_renewal_desc_db = description + "(自动续费)"
+                                auto_renewal_desc_txt = description + "(自动续费)" # TXT插入自动续费的项目内容
 
                                 # A. 数据库部分 (添加到 items_batch)
                                 item_order_db = item_order_map.get(current_child_id, 0) + 1
