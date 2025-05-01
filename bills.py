@@ -3,9 +3,9 @@ import re
 import time
 import os
 from contextlib import contextmanager
-# 假设 query.py 在同一个目录下或 Python 路径中
-from query import query_1,query_2,query_3,query_4
+from query_db import query_1, query_2, query_3, query_4
 
+#输出字体颜色
 RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -49,12 +49,9 @@ def db_connection():
     conn = sqlite3.connect('bills.db')
     try:
         yield conn
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
+        conn.commit() 
     finally:
-        conn.close()
+        conn.close() # Ensure connection is always closed
 
 def create_database():
     with db_connection() as conn:
@@ -94,8 +91,6 @@ def create_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_parent_ym ON Parent(year_month_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_child_parent ON Child(parent_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_item_child ON Item(child_id)')
-        conn.commit()
-
 
 def parse_and_insert_file(file_path, conn):
     cursor = conn.cursor()
@@ -107,103 +102,93 @@ def parse_and_insert_file(file_path, conn):
     item_order_map = {}
     items_batch = []
     expect_remark = False
-    line_num = 0 # Keep track for error reporting
+    line_num = 0 
+    with open(file_path, 'r', encoding='utf-8') as infile:
+        for line_num, line in enumerate(infile, 1):
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
 
-    try:
-        with open(file_path, 'r', encoding='utf-8') as infile:
-            for line_num, line in enumerate(infile, 1):
-                stripped_line = line.strip()
-                if not stripped_line:
+            if expect_remark:
+                if stripped_line.startswith('REMARK:'):
+                    remark = stripped_line[7:].strip()
+                    if year_month:
+                        cursor.execute('UPDATE YearMonth SET remark = ? WHERE year_month = ?', (remark, year_month))
+                    expect_remark = False
                     continue
+                else:
+                    expect_remark = False
 
-                if expect_remark:
-                    if stripped_line.startswith('REMARK:'):
-                        remark = stripped_line[7:].strip()
-                        if year_month:
-                            cursor.execute('UPDATE YearMonth SET remark = ? WHERE year_month = ?', (remark, year_month))
-                        expect_remark = False
-                        continue
-                    else:
-                        expect_remark = False
+            if stripped_line.startswith('DATE:'):
+                if items_batch:
+                    cursor.executemany(ITEM_UPSERT, items_batch)
+                    items_batch = []
 
-                if stripped_line.startswith('DATE:'):
+                year_month = stripped_line[5:].strip()
+                cursor.execute(YEAR_MONTH_INSERT, (year_month,))
+                cursor.execute(YEAR_MONTH_SELECT, (year_month,))
+                result = cursor.fetchone()
+                if not result:
+                    # Should not happen with ON CONFLICT DO NOTHING, but safety check
+                    # If this happens, it indicates a logic error needing fixing
+                    raise ValueError(f"严重错误: 无法为 {year_month} 插入或找到 YearMonth ID (行号 {line_num})")
+                year_month_id = result[0]
+
+                parent_order = 0
+                child_order_map.clear()
+                item_order_map.clear()
+                current_parent_id = current_child_id = None
+                expect_remark = True
+                print(f"  Processing date: {year_month}") # Feedback
+
+            elif year_month_id:
+                # Parent Title
+                if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+$', stripped_line):
                     if items_batch:
                         cursor.executemany(ITEM_UPSERT, items_batch)
                         items_batch = []
-
-                    year_month = stripped_line[5:].strip()
-                    cursor.execute(YEAR_MONTH_INSERT, (year_month,))
-                    cursor.execute(YEAR_MONTH_SELECT, (year_month,))
+                    parent_order += 1
+                    cursor.execute(PARENT_UPSERT, (year_month_id, stripped_line, parent_order))
+                    cursor.execute(PARENT_SELECT, (year_month_id, stripped_line))
                     result = cursor.fetchone()
-                    if not result:
-                         # Should not happen with ON CONFLICT DO NOTHING, but safety check
-                         raise ValueError(f"Failed to insert or find YearMonth for {year_month}")
-                    year_month_id = result[0]
+                    current_parent_id = result[0] if result else None
+                    if not current_parent_id:
+                         raise ValueError(f"严重错误: 无法为 {stripped_line} 在 {year_month} 获取 Parent ID (行号 {line_num})")
+                    child_order_map[current_parent_id] = 0
+                    current_child_id = None
+                    #print(f"    Parent: {stripped_line} (ID: {current_parent_id})")
 
-                    parent_order = 0
-                    child_order_map.clear()
-                    item_order_map.clear()
-                    current_parent_id = current_child_id = None
-                    expect_remark = True
-                    print(f"  Processing date: {year_month}") # Feedback
+                # Child Title
+                elif current_parent_id and re.fullmatch(r'^[a-z]+(_[a-z]+)+$', stripped_line):
+                    if items_batch:
+                        cursor.executemany(ITEM_UPSERT, items_batch)
+                        items_batch = []
+                    child_order = child_order_map.get(current_parent_id, 0) + 1
+                    child_order_map[current_parent_id] = child_order
+                    cursor.execute(CHILD_UPSERT, (current_parent_id, stripped_line, child_order))
+                    cursor.execute(CHILD_SELECT, (current_parent_id, stripped_line))
+                    result = cursor.fetchone()
+                    current_child_id = result[0] if result else None
+                    if not current_child_id:
+                         raise ValueError(f"严重错误: 无法为 {stripped_line} 在 Parent ID {current_parent_id} 下获取 Child ID (行号 {line_num})")
+                    item_order_map[current_child_id] = 0
+                    #print(f"      Child: {stripped_line} (ID: {current_child_id})")
 
-                elif year_month_id:
-                    # Parent Title
-                    if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+$', stripped_line):
-                        if items_batch:
-                            cursor.executemany(ITEM_UPSERT, items_batch)
-                            items_batch = []
-                        parent_order += 1
-                        cursor.execute(PARENT_UPSERT, (year_month_id, stripped_line, parent_order))
-                        cursor.execute(PARENT_SELECT, (year_month_id, stripped_line))
-                        result = cursor.fetchone()
-                        current_parent_id = result[0] if result else None
-                        if current_parent_id:
-                            child_order_map[current_parent_id] = 0
-                        current_child_id = None
-                        #print(f"    Parent: {stripped_line} (ID: {current_parent_id})")
-
-                    # Child Title
-                    elif current_parent_id and re.fullmatch(r'^[a-z]+(_[a-z]+)+$', stripped_line):
-                        if items_batch:
-                            cursor.executemany(ITEM_UPSERT, items_batch)
-                            items_batch = []
-                        child_order = child_order_map.get(current_parent_id, 0) + 1
-                        child_order_map[current_parent_id] = child_order
-                        cursor.execute(CHILD_UPSERT, (current_parent_id, stripped_line, child_order))
-                        cursor.execute(CHILD_SELECT, (current_parent_id, stripped_line))
-                        result = cursor.fetchone()
-                        current_child_id = result[0] if result else None
-                        if current_child_id:
-                            item_order_map[current_child_id] = 0
-                        #print(f"      Child: {stripped_line} (ID: {current_child_id})")
-
-                    # Item
-                    elif current_child_id:
-                        if match := re.match(r'^(\d+\.?\d*)\s*(.*)$', stripped_line):
-                            item_order = item_order_map.get(current_child_id, 0) + 1
-                            item_order_map[current_child_id] = item_order
-                            amount = float(match.group(1))
-                            description = match.group(2).strip()
-                            items_batch.append((
-                                current_child_id,
-                                amount,
-                                description,
-                                item_order
-                            ))
-                            #print(f"        Item: {amount} {description}")
-                        # Silently ignore lines that don't match item format under a child
-
-            # After the loop, process any remaining items
-            if items_batch:
-                cursor.executemany(ITEM_UPSERT, items_batch)
-
-    except Exception as e:
-        error_msg = f"处理文件 {os.path.basename(file_path)} 时失败: {str(e)}"
-        if line_num > 0:
-           error_msg += f" (接近行号 {line_num})"
-        # Error will be caught by handle_import, leading to rollback
-        raise RuntimeError(error_msg) from e
+                # Item
+                elif current_child_id:
+                    if match := re.match(r'^(\d+\.?\d*)\s*(.*)$', stripped_line):
+                        item_order = item_order_map.get(current_child_id, 0) + 1
+                        item_order_map[current_child_id] = item_order
+                        amount = float(match.group(1))
+                        description = match.group(2).strip()
+                        items_batch.append((
+                            current_child_id,
+                            amount,
+                            description,
+                            item_order
+                        ))
+    if items_batch:
+        cursor.executemany(ITEM_UPSERT, items_batch)
 
 
 def handle_import():
@@ -216,20 +201,20 @@ def handle_import():
         return
 
     try:
-        with db_connection() as conn: # Transaction managed here
+        with db_connection() as conn: 
             start_time = time.perf_counter()
             processed_count = 0
             processed_files_list = []
-            error_occurred = False
+            # Removed error_occurred flag
 
             files_to_process = []
             if os.path.isfile(path) and path.lower().endswith('.txt'):
-                 files_to_process.append(path)
+                files_to_process.append(path)
             elif os.path.isdir(path):
-                 for root, dirs, files in os.walk(path):
-                     for file in files:
-                         if file.lower().endswith('.txt'):
-                             files_to_process.append(os.path.join(root, file))
+                for root, dirs, files in os.walk(path):
+                    for file in files:
+                        if file.lower().endswith('.txt'):
+                            files_to_process.append(os.path.join(root, file))
             else:
                 print(f"{RED}错误: 无效的路径或文件类型.请输入单个 .txt 文件或包含 .txt 文件的文件夹路径.{RESET}")
                 return
@@ -241,22 +226,24 @@ def handle_import():
             for file_path in files_to_process:
                 print(f"--- 开始导入文件: {os.path.basename(file_path)} ---")
                 try:
+                    # If parse_and_insert_file fails here (despite the guarantee),
+                    # the exception will propagate, skip the commit in db_connection,
+                    # and be caught by the outer except block below.
                     parse_and_insert_file(file_path, conn)
                     processed_count += 1
                     processed_files_list.append(os.path.basename(file_path))
-                    print(f"{GREEN}  成功导入: {os.path.basename(file_path)}{RESET}")
+                    print(f"{GREEN}  成功处理: {os.path.basename(file_path)}{RESET}")
                 except Exception as e:
-                    print(f"{RED}错误: 导入文件 {os.path.basename(file_path)} 时发生错误: {e}{RESET}")
-                    error_occurred = True
-                    # Continue to next file, but transaction will be rolled back at the end if any error occurred
+                    # Catching exception here allows reporting the specific file error
+                    # before the main exception handler takes over.
+                    print(f"{RED}错误: 处理文件 {os.path.basename(file_path)} 时发生严重错误: {e}{RESET}")
+                    # Re-raise the exception to prevent commit and trigger the outer catch
+                    raise e
 
-            # If any error occurred during the loop, the transaction will be rolled back by db_connection's __exit__
-            if error_occurred:
-                 print(f"\n{RED}由于处理过程中出现错误, 本次导入操作中的所有更改已被回滚.{RESET}")
-                 # No need to manually rollback, context manager handles it
-                 return # Exit after rollback
+            # Removed the 'if error_occurred:' block. Commit happens automatically
+            # at the end of the 'with' block if no exceptions propagated out.
 
-            # Only print success if no errors caused a rollback
+            # Only print success if no errors caused an exception to propagate out
             duration = time.perf_counter() - start_time
             print(f"\n{GREEN}数据导入完成!{RESET}")
             print(f"成功处理文件数: {processed_count}")
@@ -264,8 +251,8 @@ def handle_import():
             print(f"总耗时: {duration:.4f} 秒")
 
     except Exception as e: # Catch errors like DB connection issues, or errors raised from parse_and_insert_file
-        print(f"\n{RED}导入操作失败: {e}{RESET}")
-        print(f"{RED}数据库更改已回滚 (如果连接成功的话).{RESET}")
+        print(f"\n{RED}导入操作因错误中断: {e}{RESET}")
+        print(f"{RED}由于发生错误, 本次导入操作未提交.{RESET}")
 
 
 def main():
@@ -273,7 +260,7 @@ def main():
 
     while True:
         print("\n========== 账单数据库选项 ==========\n")
-        print("0. 从 TXT 导入数据")
+        print("0. 从txt文件导入数据")
         print("1. 年消费查询")
         print("2. 月消费详情")
         print("3. 导出月账单")
@@ -286,9 +273,9 @@ def main():
         elif choice == '1':
             year = input("请输入年份 (例如 2024): ").strip()
             if year.isdigit() and len(year) == 4:
-                 query_1(year)
+                query_1(year)
             else:
-                 print(f"{RED}输入错误,请输入四位数字年份.{RESET}")
+                print(f"{RED}输入错误,请输入四位数字年份.{RESET}")
         elif choice == '2':
             while True:
                 date_input = input("请输入年月 (例如 202503): ").strip()
@@ -318,12 +305,12 @@ def main():
         elif choice == '4':
             year = input("请输入年份 (例如 2024): ").strip()
             if not (year.isdigit() and len(year) == 4):
-                 print(f"{RED}年份输入错误,请输入四位数字年份.{RESET}")
-                 continue
+                print(f"{RED}年份输入错误,请输入四位数字年份.{RESET}")
+                continue
             parent = input("请输入父标题 (例如 RENT房租水电): ").strip()
             if not parent:
-                 print(f"{RED}父标题不能为空.{RESET}")
-                 continue
+                print(f"{RED}父标题不能为空.{RESET}")
+                continue
             query_4(year, parent)
         elif choice == '5':
             print("程序结束运行")
