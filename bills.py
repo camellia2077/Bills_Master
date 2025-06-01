@@ -1,7 +1,10 @@
+#4 2025_05_02_00-36
+#去掉当产生错误，回滚数据的功能。因为输入的内容经过检验，默认合法
 import sqlite3
 import re
 import time
 import os
+import datetime
 from contextlib import contextmanager
 from query_db import query_1, query_2, query_3, query_4
 
@@ -256,7 +259,7 @@ def handle_import():
 
 
 def main():
-    create_database() # Ensure DB exists on startup
+    create_database()
 
     while True:
         print("\n========== 账单数据库选项 ==========\n")
@@ -271,52 +274,99 @@ def main():
         if choice == '0':
             handle_import()
         elif choice == '1':
-            year = input("请输入年份 (例如 2024): ").strip()
-            if year.isdigit() and len(year) == 4:
-                query_1(year)
-            else:
-                print(f"{RED}输入错误,请输入四位数字年份.{RESET}")
+            current_system_year = datetime.datetime.now().year
+            year_to_query = str(current_system_year)
+
+            while True:
+                year_input_str = input(f"请输入年份(默认为{current_system_year}): ").strip()
+                if not year_input_str:
+                    print(f"{RED}未获取到系统时间{RESET}")
+                    break
+                if year_input_str.isdigit() and len(year_input_str) == 4:
+                    year_to_query = year_input_str
+                    break
+                else:
+                    print(f"{RED}输入错误,请输入四位数字年份.{RESET}")
+            query_1(year_to_query)
+
         elif choice == '2':
+            current_system_year = datetime.datetime.now().year
+            current_system_month = datetime.datetime.now().month
+            default_date_str = f"{current_system_year}{current_system_month:02d}"
+            
+            year_to_query = current_system_year
+            month_to_query = current_system_month
+
             while True:
-                date_input = input("请输入年月 (例如 202503): ").strip()
-                if len(date_input) == 6 and date_input.isdigit():
-                    year = int(date_input[:4])
-                    month = int(date_input[4:])
-                    if 1 <= month <= 12:
+                date_input_str = input(f"请输入年月(默认为{default_date_str}): ").strip()
+                if not date_input_str: 
+                    print(f"{RED}未获取到系统时间{RESET}")
+                    break
+                if len(date_input_str) == 6 and date_input_str.isdigit():
+                    year_val = int(date_input_str[:4])
+                    month_val = int(date_input_str[4:])
+                    if 1 <= month_val <= 12:
+                        year_to_query = year_val
+                        month_to_query = month_val
                         break
                     else:
                         print(f"{RED}输入的月份无效 (必须介于 01 到 12 之间).{RESET}")
                 else:
                     print(f"{RED}输入格式错误, 请输入6位数字, 例如 202503.{RESET}")
-            query_2(year, month)
+            query_2(year_to_query, month_to_query)
+
         elif choice == '3':
+            current_system_year = datetime.datetime.now().year
+            current_system_month = datetime.datetime.now().month
+            default_date_str = f"{current_system_year}{current_system_month:02d}"
+
+            year_to_export = current_system_year
+            month_to_export = current_system_month
+
             while True:
-                date_input = input("请输入年月 (例如 202503): ").strip()
-                if len(date_input) == 6 and date_input.isdigit():
-                    year = int(date_input[:4])
-                    month = int(date_input[4:])
-                    if 1 <= month <= 12:
+                date_input_str = input(f"请输入年月(默认为 {default_date_str}): ").strip()
+                if not date_input_str:
+                    print(f"{RED}未获取到系统时间{RESET}")
+                    break
+                if len(date_input_str) == 6 and date_input_str.isdigit():
+                    year_val = int(date_input_str[:4])
+                    month_val = int(date_input_str[4:])
+                    if 1 <= month_val <= 12:
+                        year_to_export = year_val
+                        month_to_export = month_val
                         break
                     else:
                         print(f"{RED}输入的月份无效 (必须介于 01 到 12 之间).{RESET}")
                 else:
                     print(f"{RED}输入格式错误, 请输入6位数字, 例如 202503.{RESET}")
-            query_3(year, month)
+            query_3(year_to_export, month_to_export)
+
         elif choice == '4':
-            year = input("请输入年份 (例如 2024): ").strip()
-            if not (year.isdigit() and len(year) == 4):
-                print(f"{RED}年份输入错误,请输入四位数字年份.{RESET}")
-                continue
-            parent = input("请输入父标题 (例如 RENT房租水电): ").strip()
-            if not parent:
+            current_system_year = datetime.datetime.now().year
+            year_to_query_stats = str(current_system_year)
+
+            while True:
+                year_input_str = input(f"请输入年份(默认为{current_system_year}): ").strip()
+                if not year_input_str: 
+                    print(f"{RED}未获取到系统时间{RESET}")
+                    break
+                if year_input_str.isdigit() and len(year_input_str) == 4:
+                    year_to_query_stats = year_input_str
+                    break
+                else:
+                    print(f"{RED}年份输入错误,请输入四位数字年份.{RESET}")
+            
+            parent_title_str = input("请输入父标题 (例如 RENT房租水电): ").strip()
+            if not parent_title_str:
                 print(f"{RED}父标题不能为空.{RESET}")
                 continue
-            query_4(year, parent)
+            query_4(year_to_query_stats, parent_title_str)
+            
         elif choice == '5':
             print("程序结束运行")
             break
         else:
-            print(f"{RED}无效输入, 请输入选项中的数字 (0-5).{RESET}")
+            print(f"{RED}无效输入,请输入选项中的数字(0-5).{RESET}")
 
 if __name__ == "__main__":
     main()
