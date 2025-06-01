@@ -1,18 +1,15 @@
 import datetime
-# Assuming bills.py and query_db.py are in the same directory or in PYTHONPATH
-from bills import create_database, handle_import, RED, YELLOW, GREEN, RESET
+# Assuming bills.py, text_parser.py, database_inserter.py and query_db.py are in the same directory
+from bills import create_database, handle_import, RED, YELLOW, GREEN, RESET # create_database is now re-exported by bills.py
 from query_db import query_1, query_2, query_3, query_4
 
 def main_app_loop():
     try:
-        # Attempt to create/check database schema at application start
-        create_database()
+        create_database() # This will call the function in bills.py, which calls the one in database_inserter.py
     except Exception as e:
-        # If database initialization fails, print an error and exit or warn user.
         print(f"{RED}严重错误: 数据库初始化失败: {e}{RESET}")
         print(f"{RED}程序可能无法正常运行. 请检查数据库文件权限或配置.{RESET}")
-        # Depending on severity, you might want to exit:
-        # return
+        # return # Optionally exit
 
     while True:
         print("\n========== 账单数据库选项 ==========\n")
@@ -28,11 +25,11 @@ def main_app_loop():
             handle_import()
         elif choice == '1':
             current_system_year = datetime.datetime.now().year
-            year_to_query = str(current_system_year) # Default
+            year_to_query = str(current_system_year)
 
             while True:
                 year_input_str = input(f"请输入年份(默认为 {current_system_year}, 直接回车使用默认): ").strip()
-                if not year_input_str: # User pressed Enter for default
+                if not year_input_str:
                     print(f"使用默认年份: {year_to_query}")
                     break
                 if year_input_str.isdigit() and len(year_input_str) == 4:
@@ -40,7 +37,6 @@ def main_app_loop():
                     break
                 else:
                     print(f"{RED}输入错误, 请输入四位数字年份.{RESET}")
-            
             query_1(year_to_query)
 
         elif choice == '2':
@@ -48,7 +44,6 @@ def main_app_loop():
             default_year = now.year
             default_month = now.month
             default_date_str = f"{default_year}{default_month:02d}"
-
             year_to_query = default_year
             month_to_query = default_month
 
@@ -75,7 +70,6 @@ def main_app_loop():
             default_year = now.year
             default_month = now.month
             default_date_str = f"{default_year}{default_month:02d}"
-
             year_to_export = default_year
             month_to_export = default_month
 
@@ -99,7 +93,7 @@ def main_app_loop():
 
         elif choice == '4':
             current_system_year = datetime.datetime.now().year
-            year_to_query_stats = str(current_system_year) # Default
+            year_to_query_stats = str(current_system_year)
 
             while True:
                 year_input_str = input(f"请输入年份 (默认为 {current_system_year}, 直接回车使用默认): ").strip()
@@ -113,7 +107,7 @@ def main_app_loop():
                     print(f"{RED}年份输入错误, 请输入四位数字年份.{RESET}")
             
             parent_title_str = ""
-            while not parent_title_str: # Loop until a non-empty parent title is entered
+            while not parent_title_str:
                 parent_title_str = input("请输入父标题 (例如 RENT房租水电): ").strip()
                 if not parent_title_str:
                     print(f"{RED}父标题不能为空.{RESET}")

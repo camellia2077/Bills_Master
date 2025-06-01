@@ -1,3 +1,4 @@
+#用于从数据库中查询数据
 import sqlite3
 
 def get_sorted_data(conn, year_month):
