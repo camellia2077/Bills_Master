@@ -44,7 +44,6 @@ def db_connection(db_name='bills.db'): # Allow db_name to be specified
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"{RED}Database transaction rolled back due to error: {e}{RESET}")
         raise
     finally:
         conn.close()
@@ -87,9 +86,8 @@ def create_database(db_name='bills.db'):
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_parent_ym ON Parent(year_month_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_child_parent ON Child(parent_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_item_child ON Item(child_id)')
-        # print(f"{GREEN}Database schema checked/created successfully.{RESET}") # Message handled by caller
     except sqlite3.Error as e:
-        print(f"{RED}Database error during schema creation: {e}{RESET}")
+        # The error is re-raised for the caller to handle.
         raise
 
 def insert_data_stream(conn, data_stream):
@@ -124,14 +122,11 @@ def insert_data_stream(conn, data_stream):
                 current_year_month_id = result[0]
                 current_parent_id = None # Reset context
                 current_child_id = None  # Reset context
-                # print(f"    DB: Processed DATE {current_year_month_str}, ID: {current_year_month_id}")
-
 
             elif record_type == 'remark':
                 if not record['year_month']: # Should have year_month context from parser
                      raise ValueError(f"Remark '{record['text']}' found without associated DATE (line {line_num}).")
                 cursor.execute(YEAR_MONTH_UPDATE_REMARK, (record['text'], record['year_month']))
-                # print(f"    DB: Updated REMARK for {record['year_month']}")
 
             elif record_type == 'parent':
                 if not current_year_month_id:
@@ -146,7 +141,6 @@ def insert_data_stream(conn, data_stream):
                     raise ValueError(f"Failed to get Parent ID for '{record['title']}' under YM_ID {current_year_month_id}")
                 current_parent_id = result[0]
                 current_child_id = None # Reset child context
-                # print(f"    DB: Processed PARENT {record['title']}, ID: {current_parent_id}")
 
             elif record_type == 'child':
                 if not current_parent_id:
@@ -160,7 +154,6 @@ def insert_data_stream(conn, data_stream):
                 if not result:
                     raise ValueError(f"Failed to get Child ID for '{record['title']}' under Parent_ID {current_parent_id}")
                 current_child_id = result[0]
-                # print(f"    DB: Processed CHILD {record['title']}, ID: {current_child_id}")
 
             elif record_type == 'item':
                 if not current_child_id:
@@ -174,13 +167,10 @@ def insert_data_stream(conn, data_stream):
                 if len(items_batch) >= ITEM_BATCH_SIZE:
                     cursor.executemany(ITEM_UPSERT, items_batch)
                     items_batch = []
-                    # print(f"    DB: Flushed {ITEM_BATCH_SIZE} items to DB")
         except Exception as e:
             # Augment error with line number if available
             raise type(e)(f"Error processing record (approx. line {line_num}): {record}. Original error: {e}")
 
-
     # After the loop, process any remaining items in the batch
     if items_batch:
         cursor.executemany(ITEM_UPSERT, items_batch)
-        # print(f"    DB: Flushed remaining {len(items_batch)} items to DB")

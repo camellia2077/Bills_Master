@@ -20,7 +20,6 @@ def parse_bill_file(file_path):
     current_child_title_for_item_scope = None
     expect_remark_for_year_month = None # Stores the year_month string expecting a remark
 
-    print(f"  Parsing file: {os.path.basename(file_path)}")
     with open(file_path, 'r', encoding='utf-8') as infile:
         for line_num, line in enumerate(infile, 1):
             stripped_line = line.strip()
@@ -60,7 +59,6 @@ def parse_bill_file(file_path):
                 current_parent_title_for_child_scope = None
                 current_child_title_for_item_scope = None
                 expect_remark_for_year_month = year_month # Expect a remark for this date
-                print(f"    Parsed DATE: {year_month}")
 
             elif re.fullmatch(RE_PARENT, stripped_line):
                 parent_order += 1
@@ -74,8 +72,6 @@ def parse_bill_file(file_path):
                     'order_num': parent_order,
                     'line_num': line_num
                 }
-                print(f"      Parsed PARENT: {stripped_line} (Order: {parent_order})")
-
 
             elif current_parent_title_for_child_scope and \
                  re.fullmatch(RE_CHILD, stripped_line):
@@ -92,7 +88,6 @@ def parse_bill_file(file_path):
                     'parent_title': current_parent_title_for_child_scope, # For context if needed by inserter
                     'line_num': line_num
                 }
-                print(f"        Parsed CHILD: {stripped_line} (Order: {current_child_order}) under {current_parent_title_for_child_scope}")
 
             elif current_parent_title_for_child_scope and \
                  current_child_title_for_item_scope: # Must be under a child
@@ -112,12 +107,9 @@ def parse_bill_file(file_path):
                         'parent_title': current_parent_title_for_child_scope, # For context
                         'line_num': line_num
                     }
-                    # print(f"          Parsed ITEM: {amount} {description} (Order: {current_item_order})") # Can be too verbose
-                elif stripped_line and not stripped_line.startswith("REMARK:"): # Avoid error on empty or remark lines if not expected
-                     # If it's not empty and not an item, and we are in item context, it's an unknown format
-                    # However, if a remark was *not* expected here, this might be an error.
-                    # For now, we assume valid files will only have items or be blank after a child.
-                    # Or, it could be an error in the file structure.
-                    print(f"        WARNING: Line {line_num}: '{stripped_line}' in {file_path} was not recognized as an item under child '{current_child_title_for_item_scope}'. It might be ignored or cause issues if it's not a blank line.")
+                elif stripped_line and not stripped_line.startswith("REMARK:"):
+                    # Silently ignore lines that are not recognized as items.
+                    # Proper error handling is done via raising exceptions for major format violations.
+                    pass
             elif stripped_line: # A line that is not blank and doesn't match anything after DATE might be an error
                  raise ValueError(f"Line {line_num}: '{stripped_line}' in {file_path} is in an unexpected format or position. Ensure DATE is declared before other entries.")

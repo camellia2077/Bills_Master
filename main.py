@@ -1,6 +1,8 @@
 import datetime
 import os
+import sys
 import time
+from io import StringIO
 
 RED = "\033[31m"
 GREEN = "\033[32m"
@@ -14,8 +16,9 @@ from database_inserter import db_connection, insert_data_stream, create_database
 
 def handle_import():
     """
-    Orchestrates the import process by parsing files and inserting data into the database.
-    This function is now part of the main application logic.
+    Orchestrates the import process with high-precision timing for parsing and database insertion.
+    This version suppresses detailed parser logs and only prints the final count and timing details.
+    --- MODIFIED: Correctly times the generator-based parser by materializing it into a list. ---
     """
     path = input("请输入要导入的txt文件或文件夹路径(输入0返回):").strip()
     if path == '0':
@@ -41,56 +44,91 @@ def handle_import():
         print(f"{YELLOW}警告: 在 '{path}' 中没有找到 .txt 文件.{RESET}")
         return
 
-    processed_count = 0
-    start_time = time.perf_counter()
-
-    # The db_connection context manager will handle commit/rollback for the entire import operation
     try:
-        with db_connection() as conn: # Single transaction for all files
-            for file_path_item in files_to_process:
-                file_basename = os.path.basename(file_path_item)
-                print(f"--- 开始处理文件: {file_basename} ---")
-                try:
-                    # 1. Parse the file to get a stream of structured data
-                    data_stream = parse_bill_file(file_path_item)
-
-                    # 2. Insert the structured data into the database
-                    insert_data_stream(conn, data_stream)
-
-                    processed_count += 1
-                    print(f"{GREEN}  文件 {file_basename} 已成功暂存处理 (等待最终提交).{RESET}")
-                except ValueError as ve: # Catch parsing errors or logical errors during insertion
-                    print(f"{RED}处理文件 {file_basename} 时发生错误: {ve}{RESET}")
-                    print(f"{RED}由于此文件错误, 本次导入操作中所有文件的更改都将回滚.{RESET}")
-                    raise # Re-raise to trigger rollback in db_connection and the outer catch
-                except Exception as e:
-                    print(f"{RED}处理文件 {file_basename} 时发生未预料的严重错误: {e}{RESET}")
-                    print(f"{RED}由于此文件错误, 本次导入操作中所有文件的更改都将回滚.{RESET}")
-                    raise # Re-raise
-
-        # If the loop completes without re-raising, commit happens via db_connection
-        duration = time.perf_counter() - start_time
-        print(f"\n{GREEN}所有文件处理完毕!{RESET}")
-        print(f"成功暂存并准备提交文件数: {processed_count}")
-        print(f"总耗时: {duration:.4f} 秒")
-        print(f"{GREEN}数据库事务已成功提交.{RESET}")
-
+        create_db_schema()
     except Exception as e:
-        # This catches errors from db_connection opening, or errors re-raised from file processing.
-        # The rollback is handled by db_connection's __exit__ method.
-        print(f"\n{RED}导入操作因错误中断.{RESET}")
+        print(f"{RED}错误：数据库初始化失败，导入操作已中止。错误详情: {e}{RESET}")
+        return
+
+    processed_count = 0
+    total_files_to_process = len(files_to_process)
+    
+    # --- 计时变量初始化 ---
+    total_parse_time = 0.0
+    total_db_time = 0.0
+    # 记录整体操作的开始时间
+    total_operation_start_time = time.perf_counter()
+
+    try:
+        with db_connection() as conn:  # 为所有文件启动一个事务
+            for file_path_item in files_to_process:
+                try:
+                    # --- 计时：文本解析 ---
+                    parse_start_time = time.perf_counter()
+                    
+                    # 抑制解析器的打印输出
+                    original_stdout = sys.stdout
+                    original_stderr = sys.stderr
+                    sys.stdout = StringIO()
+                    sys.stderr = StringIO()
+                    try:
+                        # --- CHANGE: Force generator execution by converting to a list ---
+                        # This materializes all records from the file into memory,
+                        # allowing for an accurate measurement of the parsing time.
+                        records_list = list(parse_bill_file(file_path_item))
+                    finally:
+                        sys.stdout = original_stdout
+                        sys.stderr = original_stderr
+                        
+                    parse_end_time = time.perf_counter()
+                    total_parse_time += (parse_end_time - parse_start_time)
+
+                    # --- 计时：数据库插入 ---
+                    db_start_time = time.perf_counter()
+                    
+                    # --- CHANGE: Pass the materialized list to the inserter ---
+                    insert_data_stream(conn, records_list)
+
+                    db_end_time = time.perf_counter()
+                    total_db_time += (db_end_time - db_start_time)
+                    
+                    processed_count += 1
+                except (ValueError, Exception):
+                    # 重新抛出异常以触发外部事务回滚
+                    raise
+        
+        # 此代码块仅在所有文件都成功处理后运行
+        total_operation_end_time = time.perf_counter()
+        total_duration = total_operation_end_time - total_operation_start_time
+
+        print(f"\n{GREEN}===== 导入完成 ====={RESET}")
+        print(f"成功导入文件数: {processed_count}")
+        print(f"失败导入文件数: 0")
+        print("--------------------")
+        print("计时统计:")
+        # MODIFICATION START
+        print(f"  - 总耗时: {total_duration:.4f} 秒 ({total_duration * 1000:.2f} ms)")
+        print(f"  - 文本解析总耗时: {total_parse_time:.4f} 秒 ({total_parse_time * 1000:.2f} ms)")
+        print(f"  - 数据库插入总耗时: {total_db_time:.4f} 秒 ({total_db_time * 1000:.2f} ms)")
+        # MODIFICATION END
+        
+    except Exception as e:
+        # 如果发生异常导致事务回滚，此代码块将运行
+        total_operation_end_time = time.perf_counter()
+        total_duration = total_operation_end_time - total_operation_start_time
+        
+        print(f"\n{RED}===== 导入失败 ====={RESET}")
+        print(f"成功导入文件数: 0")
+        print(f"失败导入文件数: {total_files_to_process}")
+        print(f"操作因错误中止。错误详情: {e}")
+        print("--------------------")
+        print("计时统计:")
+        # MODIFICATION START
+        print(f"操作中止前总耗时: {total_duration:.4f} 秒 ({total_duration * 1000:.2f} ms)")
+        # MODIFICATION END
 
 
 def main_app_loop():
-    try:
-        # Call the schema creation function directly from the database module
-        create_db_schema()
-        print(f"{GREEN}Database schema checked/created successfully.{RESET}")
-    except Exception as e:
-        print(f"{RED}严重错误: 数据库初始化失败: {e}{RESET}")
-        print(f"{RED}程序可能无法正常运行. 请检查数据库文件权限或配置.{RESET}")
-        # return # Optionally exit
-
     while True:
         print("\n========== 账单数据库选项 ==========\n")
         print("0. 从txt文件导入数据")
