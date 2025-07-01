@@ -1,11 +1,10 @@
-# main_checker.py (已更正)
+# main_checker.py (已更新)
 
 import os
 import time
 
-# 从我们创建的模块中导入核心函数
-from bill_validator import validate_file
-from bill_modifier import process_single_file as modify_bill_file
+# !!!核心改动: 从新的 BillProcessor 模块导入!!!
+from BillProcessor import validate_file, process_single_file as modify_bill_file
 
 # ANSI转义码_颜色代码
 RED = "\033[31m"
@@ -15,7 +14,7 @@ RESET = "\033[0m"
 
 # --- 功能开关 (为修改功能服务) ---
 ENABLE_SUM_UP_LINES = True
-ENABLE_ADD_AUTORENEWAL = True # 正确的变量名
+ENABLE_ADD_AUTORENEWAL = True
 ENABLE_CLEANUP_EMPTY_ITEMS = True
 
 # --- 定义配置文件的路径 ---
@@ -65,7 +64,7 @@ def handle_validation():
         print_validation_result(file_path, validation_result)
 
 # ======================================================================
-# 修改功能区 (已更新日志打印)
+# 修改功能区 (无变动)
 # ======================================================================
 def handle_modification():
     path = input("请输入要[修正]的txt文件或目录路径 (输入0返回): ").strip()
