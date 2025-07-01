@@ -1,0 +1,62 @@
+{
+    "MEAL吃饭": [
+      "meal_low",
+      "meal_high",
+      "meal_snacks",
+      "meal_fruits",
+      "meal_drinks"
+    ],
+    "FITNESS健身": [
+      "fitness_supplies",
+      "fitness_equipments",
+      "fitness_diet"
+    ],
+    "WEB网络": [
+      "web_game",
+      "web_service",
+      "web_donates",
+      "web_sources"
+    ],
+    "PURCHASE购物": [
+      "purchase_toys",
+      "purchase_shoes",
+      "purchase_digitals",
+      "purchase_clothes"
+    ],
+    "DAILY日常": [
+      "daily_consumables",
+      "daily_fees",
+      "daily_others"
+    ],
+    "PET宠物": [
+      "pet_fish",
+      "pet_equipments",
+      "pet_fodder",
+      "pet_plants",
+      "pet_tortoise",
+      "pet_cats",
+      "pet_medicines"
+
+    ],
+    "TRIP出行": [
+      "trip_bus",
+      "trip_train",
+      "trip_taxi"
+    ],
+    "DRESS女装": [
+      "dress_enamel",
+      "dress_socks",
+      "dress_shoes",
+      "dress_sextoy",
+      "dress_clothes"
+    ],
+    "OTHER其他": [
+      "other_travels",
+      "other_gifts",
+      "other_accidents"
+    ],
+    "HOSPITAL医院": [
+      "hospital_tooth",
+      "hospital_drugs"
+    ]
+  }

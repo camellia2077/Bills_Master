@@ -2,25 +2,16 @@
 
 import re
 import time
+import json
 from collections import defaultdict
 
-# 验证逻辑函数（大部分从原文件中复制而来）
-# 我们将一些内部帮助函数标记为“私有”（以_开头），这是一种惯例
-def _check_parent_title_format(line):
-    """
-    检查行是否符合父标题的所有规则 (格式 + 必须含汉字)。
-    返回:
-      0: 完全有效
-      1: 格式基本正确，但缺少汉字
-      2: 格式无效
-    """
-    if re.fullmatch(r'^[A-Z]+[\d\u4e00-\u9fff]*$', line):
-        if re.search(r'[\u4e00-\u9fff]', line):
-            return 0
-        else:
-            return 1
-    else:
-        return 2
+# --- 新增辅助函数 ---
+def _load_config(config_path):
+    """加载并解析JSON配置文件。"""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+# --- 核心验证逻辑函数 (已更新) ---
 
 def _read_and_preprocess(file_path):
     """逐行读取文件并预处理行"""
@@ -48,67 +39,72 @@ def _validate_date_and_remark(lines):
     
     return errors
 
-# --- 状态处理函数（保持不变，也可以加_前缀） ---
+# --- 状态处理函数 (已更新以使用config) ---
+
 def _handle_parent_state(line, lineno, state):
-    status = _check_parent_title_format(line)
-    if status == 0:
+    """处理父标题状态，验证标题是否在配置中"""
+    if line in state['config']:
         new_parent = (lineno, line)
         state['parents'].append(new_parent)
         state['current_parent'] = new_parent
         state['expecting'] = 'sub'
         return []
-    elif status == 1:
-        return [(lineno, "父级标题格式正确但缺少汉字")]
     else:
-        return [(lineno, "期望父级标题 (格式: 大写字母开头, 必须含汉字, 可有数字), 但找到不匹配的内容")]
+        # 提供更具体的错误信息
+        if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+[\d]*$', line):
+            return [(lineno, f"父级标题 '{line}' 不在配置文件中")]
+        else:
+            return [(lineno, "期望一个在配置文件中定义的父级标题, 但找到不匹配的内容")]
 
 def _handle_sub_state(line, lineno, state):
+    """处理子标题状态，验证子标题是否属于父标题的配置"""
     errors = []
     current_parent = state['current_parent']
     if not current_parent:
         return [(lineno, "未找到父级标题")]
     
-    parent_lineno, parent_line = current_parent
-    match = re.match(r'^([A-Z]+)', parent_line)
-    if not match:
-        return [(parent_lineno, "父级标题格式错误")]
-    
-    expected_prefix = f"{match.group(1).lower()}_"
-    if re.fullmatch(f"^{expected_prefix}[a-z]+$", line):
+    parent_lineno, parent_name = current_parent
+    valid_subs = state['config'].get(parent_name, [])
+
+    # 检查当前行是否是为当前父项定义的有效子项
+    if line in valid_subs:
         new_sub = (lineno, line)
         state['subs'][current_parent].append(new_sub)
         state['current_sub'] = new_sub
         state['expecting'] = 'content'
-    elif _check_parent_title_format(line) == 0:
-        errors.append((current_parent[0], "父级标题缺少子标题"))
-        state['current_parent'] = (lineno, line)
-        state['parents'].append(state['current_parent'])
+    # 检查当前行是否是一个新的（但有效的）父项
+    elif line in state['config']:
+        errors.append((parent_lineno, f"父级标题 '{parent_name}' 缺少子标题"))
+        new_parent = (lineno, line)
+        state['parents'].append(new_parent)
+        state['current_parent'] = new_parent
         state['expecting'] = 'sub'
     else:
-        errors.append((lineno, f"子标题应以{expected_prefix}开头且仅含小写字母"))
+        errors.append((lineno, f"子标题 '{line}' 对于父级标题 '{parent_name}' 无效, 或该行不是一个有效的父标题"))
     return errors
 
 def _handle_content_state(line, lineno, state):
+    """处理内容状态，并检查是否过渡到新的父/子标题"""
     errors = []
     current_sub = state['current_sub']
     current_parent = state['current_parent']
 
     is_content = re.fullmatch(r'^\d+(?:\.\d+)?(?:[^\d\s][\d\u4e00-\u9fffa-zA-Z_-]*)+$', line)
-    parent_check_status = _check_parent_title_format(line)
-
+    
+    # 根据配置检查是否为新父项或新子项
+    is_new_parent = line in state['config']
     is_new_sub = False
     if current_parent:
-        parent_initials_match = re.match(r'^([A-Z]+)', current_parent[1])
-        if parent_initials_match:
-             expected_sub_prefix = f"{parent_initials_match.group(1).lower()}_"
-             is_new_sub = re.fullmatch(f"^{expected_sub_prefix}[a-z]+$", line)
+        valid_subs = state['config'].get(current_parent[1], [])
+        if line in valid_subs:
+            is_new_sub = True
 
     if is_content:
         if not current_sub:
              errors.append((lineno, "找到内容行，但当前没有活动的子标题"))
         else:
              state['content_counts'][current_sub] += 1
-    elif parent_check_status == 0:
+    elif is_new_parent:
         if current_sub and state['content_counts'][current_sub] == 0:
             errors.append((current_sub[0], "子标题缺少内容行"))
         new_parent = (lineno, line)
@@ -126,10 +122,8 @@ def _handle_content_state(line, lineno, state):
               state['subs'][current_parent].append(new_sub)
               state['current_sub'] = new_sub
               state['expecting'] = 'content'
-    elif parent_check_status == 1:
-         errors.append((lineno, "父级标题格式正确但缺少汉字"))
     else:
-         errors.append((lineno, "期望内容行、新子标题或新父标题, 但找到其他内容"))
+         errors.append((lineno, "期望内容行、配置文件中有效的子标题或父标题, 但找到其他内容"))
     return errors
 
 def _process_lines(lines, state):
@@ -147,11 +141,11 @@ def _process_lines(lines, state):
             state['errors'].extend(errors)
 
 def _post_validation_checks(state):
-    """后处理验证检查"""
+    """后处理验证检查 (逻辑不变)"""
     errors = []
     # 检查未闭合的父标题
     if state['expecting'] == 'sub' and state['current_parent']:
-        errors.append((state['current_parent'][0], "父级标题缺少子标题"))
+        errors.append((state['current_parent'][0], f"父级标题 '{state['current_parent'][1]}' 缺少子标题"))
     # 检查未闭合的子标题
     elif state['expecting'] == 'content' and state['current_sub']:
         if state['content_counts'][state['current_sub']] == 0:
@@ -160,25 +154,22 @@ def _post_validation_checks(state):
     for parent in state['parents']:
         if not state['subs'].get(parent):
             # 避免重复报错
-            if (parent[0], "父级标题缺少子标题") not in errors:
-                errors.append((parent[0], "父级标题缺少子标题"))
+            err_tuple = (parent[0], f"父级标题 '{parent[1]}' 缺少子标题")
+            if err_tuple not in errors:
+                errors.append(err_tuple)
     return errors
 
-# --- 公开的API函数 ---
-def validate_file(file_path):
+# --- 公开的API函数 (已更新) ---
+def validate_file(file_path, config_path):
     """
-    验证单个账单文件格式。这是此模块的主要入口点。
+    验证单个账单文件格式，并根据JSON配置文件校验父项和子项。
 
     Args:
-        file_path (str): 要验证的文件的路径。
+        file_path (str): 要验证的账单文件的路径。
+        config_path (str): Validator_Config.json配置文件的路径。
 
     Returns:
-        dict: 一个包含验证结果的字典，格式为:
-              {
-                  'processed_lines': int,
-                  'errors': list[tuple(int, str)],
-                  'time': float
-              }
+        dict: 一个包含验证结果的字典。
     """
     start_time = time.perf_counter()
     state = {
@@ -188,10 +179,14 @@ def validate_file(file_path):
         'parents': [],
         'subs': defaultdict(list),
         'content_counts': defaultdict(int),
-        'errors': []
+        'errors': [],
+        'config': {} # 为配置数据预留位置
     }
     
     try:
+        # 首先加载配置
+        state['config'] = _load_config(config_path)
+        
         lines = _read_and_preprocess(file_path)
         processed_lines = len(lines)
         
@@ -210,8 +205,19 @@ def validate_file(file_path):
             'errors': unique_errors,
             'time': time.perf_counter() - start_time
         }
+    except FileNotFoundError:
+        return {
+            'processed_lines': 0,
+            'errors': [(0, f"错误: 配置文件 '{config_path}' 未找到。")],
+            'time': time.perf_counter() - start_time
+        }
+    except json.JSONDecodeError:
+        return {
+            'processed_lines': 0,
+            'errors': [(0, f"错误: 配置文件 '{config_path}' 格式无效。")],
+            'time': time.perf_counter() - start_time
+        }
     except Exception as e:
-        # 模块应该向上抛出异常或在结果中报告它
         return {
             'processed_lines': 0,
             'errors': [(0, f"处理文件时发生意外错误: {e}")],

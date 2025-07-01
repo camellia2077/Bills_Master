@@ -1,4 +1,4 @@
-# main_checker.py (修改后版本)
+# main_checker.py (修正后版本)
 
 import os
 import time
@@ -18,8 +18,12 @@ RESET = "\033[0m"
 ENABLE_SUM_UP_LINES = True
 ENABLE_ADD_AUTORENEWAL = True
 
+# --- 新增: 定义配置文件的路径 ---
+# 假设 Validator_Config.json 文件与此脚本位于同一目录或项目根目录
+CONFIG_FILE_PATH = "Validator_Config.json"
+
 # ======================================================================
-# 验证功能区 (来自上一版本，保持不变)
+# 验证功能区 (已修改)
 # ======================================================================
 def print_validation_result(file_path, result):
     """打印验证结果"""
@@ -48,6 +52,11 @@ def handle_validation():
         print(f"{RED}错误: 路径 '{path}' 不存在。{RESET}")
         return
 
+    # 检查配置文件是否存在
+    if not os.path.exists(CONFIG_FILE_PATH):
+        print(f"{RED}关键错误: 配置文件 '{CONFIG_FILE_PATH}' 未找到。请确保它存在。{RESET}")
+        return
+
     files_to_process = []
     if os.path.isdir(path):
         for root, _, files in os.walk(path):
@@ -62,11 +71,12 @@ def handle_validation():
         return
 
     for file_path in files_to_process:
-        validation_result = validate_file(file_path)
+        # !!!核心改动!!!: 调用 validate_file 时传入第二个参数 CONFIG_FILE_PATH
+        validation_result = validate_file(file_path, CONFIG_FILE_PATH)
         print_validation_result(file_path, validation_result)
 
 # ======================================================================
-# 新增：修改功能区
+# 新增：修改功能区 (保持不变)
 # ======================================================================
 def handle_modification():
     """处理文件修改的整个流程"""
@@ -125,7 +135,7 @@ def handle_modification():
     print(f"总耗时: {duration:.4f} 秒")
 
 # ======================================================================
-# 主程序循环
+# 主程序循环 (保持不变)
 # ======================================================================
 def main():
     """主函数，负责循环接收用户输入"""
