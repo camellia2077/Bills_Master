@@ -26,8 +26,8 @@ def _sum_up_line(line):
         try:
             numbers = re.split(r'\s*\+\s*', numeric_part)
             total = sum(decimal.Decimal(num) for num in numbers)
-            formatted_total = total.normalize()
-            total_str = format(formatted_total, 'f')
+            # 使用 f-string 和 :.2f 格式说明符强制保留两位小数
+            total_str = f"{total:.2f}"
             new_line = f"{total_str}{description}"
             return new_line, line
         except (decimal.InvalidOperation, ValueError):
