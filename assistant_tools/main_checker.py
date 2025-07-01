@@ -71,7 +71,6 @@ def handle_validation():
         return
 
     for file_path in files_to_process:
-        # !!!核心改动!!!: 调用 validate_file 时传入第二个参数 CONFIG_FILE_PATH
         validation_result = validate_file(file_path, CONFIG_FILE_PATH)
         print_validation_result(file_path, validation_result)
 

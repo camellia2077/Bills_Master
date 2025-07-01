@@ -1,18 +1,34 @@
-# bill_validator.py
+# bill_validator.py (已更新以处理新的JSON结构)
 
 import re
 import time
 import json
 from collections import defaultdict
 
-# --- 新增辅助函数 ---
+# --- 辅助函数 ---
 def _load_config(config_path):
     """加载并解析JSON配置文件。"""
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-# --- 核心验证逻辑函数 (已更新) ---
+# --- 新增: 配置转换函数 ---
+def _transform_config_for_validation(config_data):
+    """将新的结构化配置转换为验证逻辑所需的简单字典格式。"""
+    validation_map = {}
+    if 'categories' not in config_data or not isinstance(config_data['categories'], list):
+        return {}  # 如果顶层结构不对，返回空字典
 
+    for category in config_data.get('categories', []):
+        if isinstance(category, dict) and 'parent_item' in category and 'sub_items' in category:
+            parent_name = category['parent_item']
+            sub_items_list = category['sub_items']
+            validation_map[parent_name] = sub_items_list
+    return validation_map
+
+# --- 核心验证逻辑函数 (保持不变) ---
+# _read_and_preprocess, _validate_date_and_remark, _handle_parent_state, 
+# _handle_sub_state, _handle_content_state, _process_lines, _post_validation_checks
+# 这些函数完全不需要任何修改，因为我们将配置转换回了它们期望的格式。
 def _read_and_preprocess(file_path):
     """逐行读取文件并预处理行"""
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -39,8 +55,6 @@ def _validate_date_and_remark(lines):
     
     return errors
 
-# --- 状态处理函数 (已更新以使用config) ---
-
 def _handle_parent_state(line, lineno, state):
     """处理父标题状态，验证标题是否在配置中"""
     if line in state['config']:
@@ -50,7 +64,6 @@ def _handle_parent_state(line, lineno, state):
         state['expecting'] = 'sub'
         return []
     else:
-        # 提供更具体的错误信息
         if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+[\d]*$', line):
             return [(lineno, f"父级标题 '{line}' 不在配置文件中")]
         else:
@@ -66,13 +79,11 @@ def _handle_sub_state(line, lineno, state):
     parent_lineno, parent_name = current_parent
     valid_subs = state['config'].get(parent_name, [])
 
-    # 检查当前行是否是为当前父项定义的有效子项
     if line in valid_subs:
         new_sub = (lineno, line)
         state['subs'][current_parent].append(new_sub)
         state['current_sub'] = new_sub
         state['expecting'] = 'content'
-    # 检查当前行是否是一个新的（但有效的）父项
     elif line in state['config']:
         errors.append((parent_lineno, f"父级标题 '{parent_name}' 缺少子标题"))
         new_parent = (lineno, line)
@@ -91,7 +102,6 @@ def _handle_content_state(line, lineno, state):
 
     is_content = re.fullmatch(r'^\d+(?:\.\d+)?(?:[^\d\s][\d\u4e00-\u9fffa-zA-Z_-]*)+$', line)
     
-    # 根据配置检查是否为新父项或新子项
     is_new_parent = line in state['config']
     is_new_sub = False
     if current_parent:
@@ -141,19 +151,15 @@ def _process_lines(lines, state):
             state['errors'].extend(errors)
 
 def _post_validation_checks(state):
-    """后处理验证检查 (逻辑不变)"""
+    """后处理验证检查"""
     errors = []
-    # 检查未闭合的父标题
     if state['expecting'] == 'sub' and state['current_parent']:
         errors.append((state['current_parent'][0], f"父级标题 '{state['current_parent'][1]}' 缺少子标题"))
-    # 检查未闭合的子标题
     elif state['expecting'] == 'content' and state['current_sub']:
         if state['content_counts'][state['current_sub']] == 0:
             errors.append((state['current_sub'][0], "子标题缺少内容行"))
-    # 检查所有父标题是否有子标题
     for parent in state['parents']:
         if not state['subs'].get(parent):
-            # 避免重复报错
             err_tuple = (parent[0], f"父级标题 '{parent[1]}' 缺少子标题")
             if err_tuple not in errors:
                 errors.append(err_tuple)
@@ -163,13 +169,6 @@ def _post_validation_checks(state):
 def validate_file(file_path, config_path):
     """
     验证单个账单文件格式，并根据JSON配置文件校验父项和子项。
-
-    Args:
-        file_path (str): 要验证的账单文件的路径。
-        config_path (str): Validator_Config.json配置文件的路径。
-
-    Returns:
-        dict: 一个包含验证结果的字典。
     """
     start_time = time.perf_counter()
     state = {
@@ -180,12 +179,22 @@ def validate_file(file_path, config_path):
         'subs': defaultdict(list),
         'content_counts': defaultdict(int),
         'errors': [],
-        'config': {} # 为配置数据预留位置
+        'config': {}
     }
     
     try:
-        # 首先加载配置
-        state['config'] = _load_config(config_path)
+        # !!!核心改动!!!
+        # 步骤 1: 加载原始的、结构化的JSON文件
+        raw_config = _load_config(config_path)
+        # 步骤 2: 将其转换为验证逻辑所需的简单字典格式
+        state['config'] = _transform_config_for_validation(raw_config)
+        
+        if not state['config']:
+            return {
+                'processed_lines': 0,
+                'errors': [(0, f"错误: 配置文件 '{config_path}' 格式不正确或内容为空。")],
+                'time': time.perf_counter() - start_time
+            }
         
         lines = _read_and_preprocess(file_path)
         processed_lines = len(lines)
@@ -197,7 +206,6 @@ def validate_file(file_path, config_path):
         
         state['errors'].extend(_post_validation_checks(state))
         
-        # 去重和排序错误
         unique_errors = sorted(list(set(state['errors'])), key=lambda x: x[0])
 
         return {
