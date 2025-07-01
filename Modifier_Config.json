@@ -1,0 +1,7 @@
+{
+    "auto_renewal_rules": {
+      "web_service": [
+        { "amount": 25.0, "description": "迅雷加速器" }
+      ]
+    }
+  }
