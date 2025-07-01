@@ -57,9 +57,7 @@ def get_sorted_data(conn, year_month):
         )
     
     return structured_data
-
 def query_1(year):
-    """Queries annual consumption statistics and returns them as a dictionary."""
     conn = sqlite3.connect('bills.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -72,25 +70,29 @@ def query_1(year):
         GROUP BY ym.year_month
     ''', (year,))
     results = cursor.fetchall()
-    conn.close()
     
     if results:
         year_total = sum(row[1] for row in results)
         month_count = len(results)
         average = year_total / month_count
         
-        monthly_details = [{'year_month': ym_str, 'total': total} for ym_str, total in results]
-        
-        return {
-            'year_total': year_total,
-            'average_monthly': average,
-            'monthly_details': monthly_details
-        }
+        print("-------------------------------\n")
+        print(f"{year}年消费统计:")
+        print(f"年度总消费: {year_total:.2f}元")
+        print(f"月均消费: {average:.2f}元")
+        print("各月消费明细:")
+        for ym_str, total in results:
+            year_part = ym_str[:4]
+            month_part = int(ym_str[4:])
+            print(f"  {year_part}年{month_part}月: {total:.2f}元")
+        print("\n")
+        print("-------------------------------")
     else:
-        return None
+        print("无数据")
+    
+    conn.close()
 
 def query_2(year, month):
-    """Queries detailed monthly consumption and returns it as a dictionary."""
     ym = f"{year}{month:02d}"
     conn = sqlite3.connect('bills.db')
     
@@ -103,37 +105,43 @@ def query_2(year, month):
         JOIN YearMonth ym ON p.year_month_id = ym.id
         WHERE ym.year_month = ?
     ''', (ym,))
-    total_result = cursor.fetchone()
+    total = cursor.fetchone()[0]
     
-    if not total_result or total_result[0] is None:
+    if not total:
+        print("无数据")
         conn.close()
-        return None
-        
-    total_consumption = total_result[0]
+        return
+    
+    print(f"\n{ym}总消费: {total:.2f}元")
+    
     data = get_sorted_data(conn, ym)
+    
+    for p_title, p_data in data.items():
+        print(f"\n【{p_title}】{p_data['total']:.2f}元 ({p_data['total']/total*100:.1f}%)")
+        
+        for c_title, c_data in p_data['children'].items():
+            print(f"\n    {c_title}: {c_data['total']:.2f}元")
+            
+            for amount, desc in c_data['items']:
+                amount_str = f"{int(amount)}" if amount.is_integer() else f"{amount}"
+                print(f"        {amount_str} {desc}")
+    
     conn.close()
 
-    return {
-        'total_consumption': total_consumption,
-        'details': data
-    }
-
-
 def query_3(year, month):
-    """Generates a bill string in the original file format and returns it."""
     ym = f"{year}{month:02d}"
     conn = sqlite3.connect('bills.db')
     
     cursor = conn.cursor()
     cursor.execute('SELECT id FROM YearMonth WHERE year_month = ?', (ym,))
     if not cursor.fetchone():
+        print("无数据")
         conn.close()
-        return None
+        return
     
     data = get_sorted_data(conn, ym)
-    conn.close()
-
-    output = [f"DATE:{ym}"]
+    
+    output = [f"DATE{ym}"]
     first_parent = True
     
     for p_title, p_data in data.items():
@@ -145,15 +153,15 @@ def query_3(year, month):
             output.append(c_title)
             
             for amount, desc in c_data['items']:
-                amount_str = f"{int(amount)}" if amount == int(amount) else f"{amount}"
-                output.append(f"{amount_str} {desc}")
+                amount_str = f"{int(amount)}" if amount.is_integer() else f"{amount}"
+                output.append(f"{amount_str}{desc}")
         
         first_parent = False
     
-    return '\n'.join(output)
+    print('\n'.join(output))
+    conn.close()
 
 def query_4(year, parent):
-    """Queries the total annual consumption for a specific parent category and returns the value."""
     conn = sqlite3.connect('bills.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -165,5 +173,8 @@ def query_4(year, parent):
         WHERE ym.year_month LIKE ? || '%' AND p.title = ?
     ''', (year, parent))
     total = cursor.fetchone()[0]
+    if total:
+        print(f"{year}年[{parent}]总消费: {total:.2f}元")
+    else:
+        print("无数据")
     conn.close()
-    return total
