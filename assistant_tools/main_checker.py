@@ -1,6 +1,8 @@
 import os
 import time
-from BillProcessor import BillProcessor
+import json
+# 从 reprocessor 包中导入 BillProcessor
+from reprocessor.BillProcessor import BillProcessor
 
 # ANSI escape codes for colored console output
 RED = "\033[31m"
@@ -14,158 +16,132 @@ ENABLE_ADD_AUTORENEWAL = True
 ENABLE_CLEANUP_EMPTY_ITEMS = True
 ENABLE_SORT_CONTENT = True
 
-# --- Configuration File Paths ---
-VALIDATOR_CONFIG_PATH = "Validator_Config.json"
-MODIFIER_CONFIG_PATH = "Modifier_Config.json" 
+# --- 主配置文件路径 ---
+MAIN_CONFIG_FILE = "main_config.json"
 
-# ======================================================================
-# Validation Function Area
-# ======================================================================
-def print_validation_result(file_path, result):
-    """Prints the results of a validation check in a formatted way."""
+def print_validation_result(file_path, is_valid, result_data):
+    """Prints a formatted summary of the validation results."""
     filename = os.path.basename(file_path)
-    print("-" * 40)
-    print(f"File: {filename}")
-    if not result['errors']:
-        print(f"{GREEN}Validation Passed{RESET}")
+    print("\n" + "-" * 20 + f" Validation Summary: {filename} " + "-" * 20)
+    if is_valid:
+        print(f"{GREEN}Result: PASSED (No critical errors found){RESET}")
     else:
-        print(f"{RED}Validation Failed, found {len(result['errors'])} errors:{RESET}")
-        for lineno, message in result['errors']:
-            print(f"  - Line {lineno:<4}: {message}")
-    print(f"Processed Lines: {result['processed_lines']}")
-    print(f"Execution Time: {result['time']:.6f} seconds")
-    print("-" * 40 + "\n")
+        print(f"{RED}Result: FAILED (Critical errors found){RESET}")
+    
+    if result_data['errors']:
+        print(f"{RED}Errors ({len(result_data['errors'])}):{RESET}")
+        for lineno, message in result_data['errors']: print(f"  - Line {lineno:<4}: {message}")
+    
+    if result_data['warnings']:
+        print(f"{YELLOW}Warnings ({len(result_data['warnings'])}):{RESET}")
+        for lineno, message in result_data['warnings']: print(f"  - Line {lineno:<4}: {message}")
+    
+    print(f"Details: {result_data['processed_lines']} lines processed in {result_data['time']:.6f}s.")
+    print("-" * (42 + len(filename)) + "\n")
+
+
+def get_files_from_path(path):
+    """Helper to get a list of .txt files from a given path."""
+    if not os.path.exists(path):
+        print(f"{RED}Error: Path '{path}' does not exist.{RESET}")
+        return []
+    files_to_process = []
+    if os.path.isdir(path):
+        files_to_process.extend([os.path.join(root, file) for root, _, files in os.walk(path) for file in sorted(files) if file.lower().endswith('.txt')])
+    elif os.path.isfile(path) and path.lower().endswith('.txt'):
+        files_to_process.append(path)
+    if not files_to_process:
+        print(f"{YELLOW}No .txt files found in '{path}'.{RESET}")
+    return files_to_process
 
 def handle_validation(processor: BillProcessor):
-    """
-    Handles the user interaction for validating bill files.
-
-    Args:
-        processor (BillProcessor): An instance of the BillProcessor class.
-    """
-    path = input("Enter the path of the .txt file or directory to [Validate] (Enter 0 to return): ").strip()
+    """Handles validating bill files."""
+    path = input("Enter path to [Validate] (or 0 to return): ").strip()
     if path == '0': return
-    if not os.path.exists(path):
-        print(f"{RED}Error: Path '{path}' does not exist.{RESET}")
-        return
-
-    files_to_process = []
-    if os.path.isdir(path):
-        for root, _, files in os.walk(path):
-            files_to_process.extend([os.path.join(root, file) for file in sorted(files) if file.lower().endswith('.txt')])
-    elif os.path.isfile(path):
-        files_to_process.append(path)
-    
-    if not files_to_process:
-        print(f"No .txt files found in {path}.")
-        return
-
-    for file_path in files_to_process:
+    for file_path in get_files_from_path(path):
         try:
-            # Use the processor to validate the file
-            validation_result = processor.validate_bill_file(file_path)
-            print_validation_result(file_path, validation_result)
+            is_valid, validation_result = processor.validate_bill_file(file_path)
+            print_validation_result(file_path, is_valid, validation_result)
         except Exception as e:
-            print(f"{RED}An unexpected error occurred while processing {os.path.basename(file_path)}: {e}{RESET}")
+            print(f"{RED}An unexpected error occurred: {e}{RESET}")
 
-# ======================================================================
-# Modification Function Area
-# ======================================================================
 def handle_modification(processor: BillProcessor):
-    """
-    Handles the user interaction for modifying bill files.
-
-    Args:
-        processor (BillProcessor): An instance of the BillProcessor class.
-    """
-    path = input("Enter the path of the .txt file or directory to [Modify] (Enter 0 to return): ").strip()
+    """Handles modifying bill files."""
+    path = input("Enter path to [Modify] (or 0 to return): ").strip()
     if path == '0': return
-
-    if not os.path.exists(path):
-        print(f"{RED}Error: Path '{path}' does not exist.{RESET}")
-        return
-
-    files_to_process = []
-    if os.path.isdir(path):
-        for root, _, files in os.walk(path):
-            files_to_process.extend([os.path.join(root, file) for file in sorted(files) if file.lower().endswith('.txt')])
-    elif os.path.isfile(path):
-        files_to_process.append(path)
-
-    if not files_to_process:
-        print(f"No .txt files found in {path}.")
-        return
-
-    total_files, modified_count = len(files_to_process), 0
-    start_time = time.perf_counter()
-
-    print(f"\n--- Found {total_files} files, starting process ---")
-    print(f"Line Sum-up: {'Enabled' if ENABLE_SUM_UP_LINES else 'Disabled'}")
-    print(f"Auto-renewal: {'Enabled' if ENABLE_ADD_AUTORENEWAL else 'Disabled'}")
-    print(f"Content Sorting: {'Enabled' if ENABLE_SORT_CONTENT else 'Disabled'}")
-    print(f"Cleanup Empty Items: {'Enabled' if ENABLE_CLEANUP_EMPTY_ITEMS else 'Disabled'}")
+    files_to_process = get_files_from_path(path)
+    if not files_to_process: return
 
     for file_path in files_to_process:
-        print(f"\n--- Processing file: {os.path.basename(file_path)} ---")
         try:
-            # Use the processor to modify the file
-            result = processor.modify_bill_file(
-                file_path,
-                ENABLE_SUM_UP_LINES,
-                ENABLE_ADD_AUTORENEWAL,
-                ENABLE_CLEANUP_EMPTY_ITEMS,
-                ENABLE_SORT_CONTENT
+            processor.modify_bill_file(
+                file_path, ENABLE_SUM_UP_LINES, ENABLE_ADD_AUTORENEWAL,
+                ENABLE_CLEANUP_EMPTY_ITEMS, ENABLE_SORT_CONTENT
             )
-
-            if result['error']:
-                print(f"{RED}Error: {result['error']}{RESET}")
-            else:
-                for log_entry in result['log']:
-                    if any(kw in log_entry for kw in ["Updated", "Added", "Calculated", "Cleaned", "Deleted", "Sorted"]):
-                        print(f"{GREEN}  - {log_entry}{RESET}")
-                    elif "No changes" in log_entry or "not found" in log_entry:
-                        print(f"{YELLOW}  - {log_entry}{RESET}")
-                    else:
-                        print(f"  - {log_entry}")
-                
-                if result['modified']:
-                    modified_count += 1
         except Exception as e:
-            print(f"{RED}An unexpected error occurred while processing {os.path.basename(file_path)}: {e}{RESET}")
+            print(f"{RED}An unexpected error occurred: {e}{RESET}")
 
-    duration = time.perf_counter() - start_time
-    print("\n========== Processing Complete ==========")
-    print(f"Total files processed: {total_files}")
-    print(f"Files successfully modified: {modified_count}")
-    print(f"Total time elapsed: {duration:.4f} seconds")
+def handle_validation_and_modification(processor: BillProcessor):
+    """Handles validating AND then modifying bill files."""
+    path = input("Enter path to [Validate & Modify] (or 0 to return): ").strip()
+    if path == '0': return
+    for file_path in get_files_from_path(path):
+        try:
+            success, message, validation_details = processor.validate_and_modify_bill_file(
+                file_path, ENABLE_SUM_UP_LINES, ENABLE_ADD_AUTORENEWAL,
+                ENABLE_CLEANUP_EMPTY_ITEMS, ENABLE_SORT_CONTENT
+            )
+            if success:
+                print(f"{GREEN}Overall Result for {os.path.basename(file_path)}: {message}{RESET}")
+            else:
+                print(f"{RED}Overall Result for {os.path.basename(file_path)}: {message}{RESET}")
+        except Exception as e:
+            print(f"{RED}An unexpected error occurred: {e}{RESET}")
 
-# ======================================================================
-# Main Program Loop
-# ======================================================================
-def main():
-    """
-    Main function to run the Bill Toolbox application.
-    It initializes the BillProcessor and handles the main menu loop.
-    """
+def load_config_paths(config_file: str) -> dict:
+    """从主配置文件加载路径。"""
     try:
-        # Initialize the processor at the start
-        processor = BillProcessor(VALIDATOR_CONFIG_PATH, MODIFIER_CONFIG_PATH)
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"{RED}Critical Error: Main config file '{config_file}' not found.{RESET}")
+        return None
+    except json.JSONDecodeError:
+        print(f"{RED}Critical Error: Could not decode JSON from '{config_file}'.{RESET}")
+        return None
+    except KeyError as e:
+        print(f"{RED}Critical Error: Missing key {e} in '{config_file}'.{RESET}")
+        return None
+
+
+def main():
+    """Main function to run the Bill Toolbox application."""
+    # 从主配置文件加载路径
+    config_paths = load_config_paths(MAIN_CONFIG_FILE)
+    if not config_paths:
+        return
+
+    try:
+        # 使用加载的路径初始化处理器
+        processor = BillProcessor(
+            validator_config_path=config_paths['validator_config_path'],
+            modifier_config_path=config_paths['modifier_config_path']
+        )
     except FileNotFoundError as e:
         print(f"{RED}Critical Error: {e}{RESET}")
-        print("Please ensure the configuration files exist and try again. Exiting program.")
         return
-
+        
     while True:
         print("\n========== Bill Toolbox ==========")
         print("1. Validate Bill File(s) Format")
-        print("2. Format and Modify Bill File(s) (Sum/Renew/Cleanup/Sort)")
+        print("2. Modify Bill File(s) Only")
+        print("3. Validate AND Modify File(s) (验证失败则中止)")
         print("0. Exit")
         choice = input("Select an option: ").strip()
         
-        if choice == '1':
-            handle_validation(processor) 
-        elif choice == '2':
-            handle_modification(processor) 
+        if choice == '1': handle_validation(processor) 
+        elif choice == '2': handle_modification(processor)
+        elif choice == '3': handle_validation_and_modification(processor)
         elif choice == '0':
             print("Exiting program.")
             break
