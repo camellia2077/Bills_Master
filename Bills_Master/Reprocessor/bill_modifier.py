@@ -5,11 +5,13 @@ import decimal
 import json
 from .status_logger import log_info, log_error
 
+# _load_config, _sum_up_line, _perform_initial_modifications, _get_line_type, _get_numeric_value_from_content 函数保持不变
 def _load_config(config_path):
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
+        log_error(f"Failed to load or parse config file: {config_path}")
         return {}
 
 def _sum_up_line(line):
@@ -84,12 +86,69 @@ def _get_numeric_value_from_content(line_content):
     match = re.match(r'^(\d+(?:\.\d*)?)', line_content.strip())
     return decimal.Decimal(match.group(1)) if match else decimal.Decimal('-1')
 
-def _process_structured_modifications(file_path, enable_cleanup, enable_sorting):
+# --- MODIFIED: This function now accepts formatting rules from the config ---
+def _reconstruct_content_with_formatting(bill_structure, formatting_rules):
+    """
+    Reconstructs the file content from the structure with improved formatting
+    based on rules from the config file.
+    """
+    # Get formatting rules from config, with default values for safety
+    lines_after_parent_section = formatting_rules.get('lines_after_parent_section', 2)
+    lines_after_parent_title = formatting_rules.get('lines_after_parent_title', 1)
+    lines_between_sub_items = formatting_rules.get('lines_between_sub_items', 1)
+
+    output_lines = []
+    num_top_nodes = len(bill_structure)
+
+    for i, node in enumerate(bill_structure):
+        node_type = node.get('type')
+
+        if node_type != 'PARENT':
+            output_lines.append(node['content'].strip())
+            continue
+
+        output_lines.append(node['content'].strip())
+        children = node.get('children', [])
+        
+        if children:
+            # Rule: Add blank lines between parent and first sub-item
+            for _ in range(lines_after_parent_title):
+                output_lines.append('')
+
+            num_children = len(children)
+            for j, child_node in enumerate(children):
+                output_lines.append(child_node['content'].strip())
+                for content_node in child_node.get('children', []):
+                    output_lines.append(content_node['content'].strip())
+
+                # Rule: Add blank lines between sub-items
+                if j < num_children - 1:
+                    for _ in range(lines_between_sub_items):
+                        output_lines.append('')
+        
+        # Rule: Add blank lines after the entire parent section
+        if i < num_top_nodes - 1:
+            for _ in range(lines_after_parent_section):
+                output_lines.append('')
+
+    return '\n'.join(output_lines) + '\n'
+
+
+# --- MODIFIED: This function now passes the config down ---
+def _process_structured_modifications(file_path, enable_cleanup, enable_sorting, config):
     try:
-        with open(file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
         original_content = "".join(lines)
+        processed_lines = [line for line in lines if line.strip()]
+        
+        if not processed_lines:
+            return True
+
         bill_structure, current_parent_node, current_sub_node = [], None, None
-        for line in lines:
+        
+        for line in processed_lines:
             line_type, _ = _get_line_type(line)
             if line_type == 'PARENT':
                 current_parent_node = {'type': 'PARENT', 'content': line, 'children': []}
@@ -97,8 +156,10 @@ def _process_structured_modifications(file_path, enable_cleanup, enable_sorting)
                 current_sub_node = None
             elif line_type == 'SUB':
                 current_sub_node = {'type': 'SUB', 'content': line, 'children': []}
-                if current_parent_node: current_parent_node['children'].append(current_sub_node)
-                else: bill_structure.append(current_sub_node)
+                if current_parent_node:
+                    current_parent_node['children'].append(current_sub_node)
+                else:
+                    bill_structure.append(current_sub_node)
             elif line_type == 'CONTENT' and current_sub_node:
                 current_sub_node['children'].append({'type': 'CONTENT', 'content': line})
             else:
@@ -113,41 +174,59 @@ def _process_structured_modifications(file_path, enable_cleanup, enable_sorting)
                     if sub_node.get('children'):
                         sub_node['children'].sort(key=lambda item: (-_get_numeric_value_from_content(item['content']), item['content']))
                         sorted_subs_count += 1
-            if sorted_subs_count > 0: log_info(f"Sorted content for {sorted_subs_count} sub-items.")
+            if sorted_subs_count > 0:
+                log_info(f"Sorted content for {sorted_subs_count} sub-items.")
 
         if enable_cleanup:
             for node in bill_structure:
                 if node['type'] == 'PARENT':
                     deleted_subs = [child['content'].strip() for child in node.get('children', []) if not child.get('children')]
                     node['children'] = [child for child in node.get('children', []) if child.get('children')]
-                    if deleted_subs: log_info(f"Deleted empty sub-items: {', '.join(deleted_subs)}")
+                    if deleted_subs:
+                        log_info(f"Deleted empty sub-items: {', '.join(deleted_subs)}")
             final_structure = [node for node in bill_structure if not (node['type'] == 'PARENT' and not node.get('children')) and not (node['type'] == 'SUB' and not node.get('children'))]
-            if len(final_structure) < len(bill_structure): log_info("Deleted parent items that became empty.")
+            if len(final_structure) < len(bill_structure):
+                log_info("Deleted parent items that became empty.")
             bill_structure = final_structure
 
-        new_lines = [node['content'] for node in bill_structure]
-        for node in bill_structure:
-            for child_node in node.get('children', []):
-                new_lines.append(child_node['content'])
-                for content_node in child_node.get('children', []):
-                    new_lines.append(content_node['content'])
+        # --- MODIFIED: Pass the formatting rules from the config ---
+        formatting_rules = config.get('formatting_rules', {})
+        new_content = _reconstruct_content_with_formatting(bill_structure, formatting_rules)
         
-        new_content = "".join(new_lines)
-        if new_content != original_content:
-            with open(file_path, 'w', encoding='utf-8') as f: f.write(new_content)
+        if new_content.strip() != original_content.strip():
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
         return True
     except Exception as e:
         log_error(f"An unexpected error occurred during structured modifications: {e}")
         return False
 
-def process_single_file(file_path, modifier_config_path, enable_summing, enable_autorenewal, enable_cleanup, enable_sorting):
+def process_single_file(file_path: str, modifier_config_path: str) -> bool:
+    """
+    Processes a single file based on settings from the modifier config file.
+    """
     config = _load_config(modifier_config_path)
+    
+    flags = config.get('modification_flags', {})
+    enable_summing = flags.get('enable_summing', False)
+    enable_autorenewal = flags.get('enable_autorenewal', False)
+    enable_cleanup = flags.get('enable_cleanup', False)
+    enable_sorting = flags.get('enable_sorting', False)
+    
     renewal_rules = config.get('auto_renewal_rules', {})
     
+    log_info(f"Summing: {'Enabled' if enable_summing else 'Disabled'}")
+    log_info(f"Auto-renewal: {'Enabled' if enable_autorenewal else 'Disabled'}")
+    log_info(f"Cleanup: {'Enabled' if enable_cleanup else 'Disabled'}")
+    log_info(f"Sorting: {'Enabled' if enable_sorting else 'Disabled'}")
+
     if enable_summing or (enable_autorenewal and renewal_rules):
-        if not _perform_initial_modifications(file_path, enable_summing, enable_autorenewal, renewal_rules): return False
+        if not _perform_initial_modifications(file_path, enable_summing, enable_autorenewal, renewal_rules): 
+            return False
             
     if enable_cleanup or enable_sorting:
-        if not _process_structured_modifications(file_path, enable_cleanup, enable_sorting): return False
+        # --- MODIFIED: Pass the entire config object down ---
+        if not _process_structured_modifications(file_path, enable_cleanup, enable_sorting, config): 
+            return False
             
     return True

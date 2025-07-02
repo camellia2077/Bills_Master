@@ -2,7 +2,8 @@ import os
 # 在模块名前加上点，表示从当前包（reprocessor）内导入
 from .bill_modifier import process_single_file as modify_bill
 from .bill_validator import validate_file as validate_bill
-from .status_logger import log_step_start, log_step_end
+# --- MODIFIED: Import the new logger function ---
+from .status_logger import log_step_start, log_step_end, log_validation_results
 from typing import Tuple, Dict
 
 class BillProcessor:
@@ -25,13 +26,18 @@ class BillProcessor:
             raise FileNotFoundError(f"The specified bill file was not found: {bill_file_path}")
             
         is_valid, result = validate_bill(bill_file_path, self.validator_config_path)
+        
+        # --- NEW: Immediately print detailed results ---
+        log_validation_results(result)
+        
         log_step_end("Validation complete", success=is_valid)
         return is_valid, result
 
-    def modify_bill_file(self, bill_file_path: str, enable_summing: bool = True, 
-                         enable_autorenewal: bool = True, enable_cleanup: bool = True, 
-                         enable_sorting: bool = True) -> bool:
-        """Modifies a single bill file. Logs are printed directly."""
+    def modify_bill_file(self, bill_file_path: str) -> bool:
+        """
+        Modifies a single bill file based on settings in the config file.
+        Logs are printed directly.
+        """
         filename = os.path.basename(bill_file_path)
         log_step_start(f"Modifying file: {filename}")
 
@@ -40,29 +46,25 @@ class BillProcessor:
         
         success = modify_bill(
             file_path=bill_file_path,
-            modifier_config_path=self.modifier_config_path,
-            enable_summing=enable_summing,
-            enable_autorenewal=enable_autorenewal,
-            enable_cleanup=enable_cleanup,
-            enable_sorting=enable_sorting
+            modifier_config_path=self.modifier_config_path
         )
         log_step_end("Modification complete", success=success)
         return success
 
-    def validate_and_modify_bill_file(self, bill_file_path: str, 
-                                      enable_summing: bool, enable_autorenewal: bool, 
-                                      enable_cleanup: bool, enable_sorting: bool) -> Tuple[bool, str, Dict]:
-        """Sequentially validates and then modifies a file."""
-        # Step 1: Validate
+    def validate_and_modify_bill_file(self, bill_file_path: str) -> Tuple[bool, str, Dict]:
+        """
+        Sequentially validates and then modifies a file based on config settings.
+        """
+        # Step 1: Validate. The detailed results will be printed inside this call.
         is_valid, validation_result = self.validate_bill_file(bill_file_path)
+        
         if not is_valid:
             message = "Validation failed. Halting process."
             return False, message, validation_result
         
         # Step 2: Modify
-        mod_success = self.modify_bill_file(
-            bill_file_path, enable_summing, enable_autorenewal, enable_cleanup, enable_sorting
-        )
+        mod_success = self.modify_bill_file(bill_file_path)
+        
         if mod_success:
             message = "Validation passed and modification successful."
             return True, message, validation_result
