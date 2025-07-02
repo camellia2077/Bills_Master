@@ -6,13 +6,11 @@ import sqlite3
 from io import StringIO
 
 
-RED = "\033[31m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RESET = "\033[0m"
+# 从 common.py 导入颜色
+from common import RED, GREEN, YELLOW, RESET
 
 # MODIFIED: Import the new, more descriptive function names from query_db.py
-from query_db import (
+from Query.query_db import (
     display_yearly_summary,
     display_monthly_details,
     export_monthly_bill_as_text,
@@ -20,9 +18,9 @@ from query_db import (
 )
 
 # Import independent modules for parsing and database operations
-from text_parser import parse_bill_file
+from TextParser.text_parser import parse_bill_file
 # --- MODIFIED IMPORT: Use the new refactored functions ---
-from database_inserter import insert_data, create_database as create_db_schema
+from Inserter.database_inserter import insert_data, create_database as create_db_schema
 
 
 def handle_import():
