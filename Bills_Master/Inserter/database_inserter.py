@@ -2,10 +2,8 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Iterator, Dict, Any, Optional
 
-# Output font colors
-RED = "\033[31m"
-GREEN = "\033[32m"
-RESET = "\033[0m"
+# 从 common.py 导入颜色
+from common import RED, GREEN, RESET
 
 
 class DatabaseManager:
@@ -248,7 +246,9 @@ class DataProcessor:
         if len(self.items_batch) >= self.ITEM_BATCH_SIZE:
             self._flush_items_batch()
 
-# --- Public API Function ---
+# ==============================================================================
+# 公共接口函数
+# ==============================================================================
 
 def create_database(db_name: str = 'bills.db') -> bool:
     """
