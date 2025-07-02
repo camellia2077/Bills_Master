@@ -8,7 +8,14 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RESET = "\033[0m"
-from query_db import query_1, query_2, query_3, query_4
+
+# MODIFIED: Import the new, more descriptive function names from query_db.py
+from query_db import (
+    display_yearly_summary,
+    display_monthly_details,
+    export_monthly_bill_as_text,
+    display_yearly_parent_category_summary
+)
 
 # Import independent modules for parsing and database operations
 from text_parser import parse_bill_file
@@ -16,9 +23,8 @@ from database_inserter import db_connection, insert_data_stream, create_database
 
 def handle_import():
     """
-    Orchestrates the import process with high-precision timing for parsing and database insertion.
-    This version suppresses detailed parser logs and only prints the final count and timing details.
-    --- MODIFIED: Correctly times the generator-based parser by materializing it into a list. ---
+    Orchestrates the import process. This version is updated to handle boolean
+    return values from parser and inserter modules.
     """
     path = input("请输入要导入的txt文件或文件夹路径(输入0返回):").strip()
     if path == '0':
@@ -44,88 +50,73 @@ def handle_import():
         print(f"{YELLOW}警告: 在 '{path}' 中没有找到 .txt 文件.{RESET}")
         return
 
-    try:
-        create_db_schema()
-    except Exception as e:
-        print(f"{RED}错误：数据库初始化失败，导入操作已中止。错误详情: {e}{RESET}")
+    # --- MODIFICATION: Check boolean return from create_db_schema ---
+    if not create_db_schema():
+        # The module itself now prints the detailed error.
+        print(f"{RED}错误：数据库初始化失败，导入操作已中止。{RESET}")
         return
 
     processed_count = 0
+    failed_file = None  # To keep track of which file failed
     total_files_to_process = len(files_to_process)
     
-    # --- 计时变量初始化 ---
     total_parse_time = 0.0
     total_db_time = 0.0
-    # 记录整体操作的开始时间
     total_operation_start_time = time.perf_counter()
 
     try:
-        with db_connection() as conn:  # 为所有文件启动一个事务
+        # A single transaction for all files. If one fails, all are rolled back.
+        with db_connection() as conn:
             for file_path_item in files_to_process:
-                try:
-                    # --- 计时：文本解析 ---
-                    parse_start_time = time.perf_counter()
-                    
-                    # 抑制解析器的打印输出
-                    original_stdout = sys.stdout
-                    original_stderr = sys.stderr
-                    sys.stdout = StringIO()
-                    sys.stderr = StringIO()
-                    try:
-                        # --- CHANGE: Force generator execution by converting to a list ---
-                        # This materializes all records from the file into memory,
-                        # allowing for an accurate measurement of the parsing time.
-                        records_list = list(parse_bill_file(file_path_item))
-                    finally:
-                        sys.stdout = original_stdout
-                        sys.stderr = original_stderr
-                        
-                    parse_end_time = time.perf_counter()
-                    total_parse_time += (parse_end_time - parse_start_time)
+                failed_file = os.path.basename(file_path_item) # Assume this one might fail
 
-                    # --- 计时：数据库插入 ---
-                    db_start_time = time.perf_counter()
-                    
-                    # --- CHANGE: Pass the materialized list to the inserter ---
-                    insert_data_stream(conn, records_list)
+                # --- MODIFICATION: Handle new return value from parser ---
+                parse_start_time = time.perf_counter()
+                parse_success, records_list = parse_bill_file(file_path_item)
+                parse_end_time = time.perf_counter()
+                total_parse_time += (parse_end_time - parse_start_time)
+                
+                if not parse_success:
+                    # Parser already printed the error. Raise exception to trigger rollback.
+                    raise ValueError("文件解析失败")
 
-                    db_end_time = time.perf_counter()
-                    total_db_time += (db_end_time - db_start_time)
-                    
-                    processed_count += 1
-                except (ValueError, Exception):
-                    # 重新抛出异常以触发外部事务回滚
-                    raise
-        
-        # 此代码块仅在所有文件都成功处理后运行
+                # --- MODIFICATION: Handle new return value from inserter ---
+                db_start_time = time.perf_counter()
+                insert_success = insert_data_stream(conn, records_list)
+                db_end_time = time.perf_counter()
+                total_db_time += (db_end_time - db_start_time)
+                
+                if not insert_success:
+                    # Inserter already printed the error. Raise exception to trigger rollback.
+                    raise ValueError("数据库插入失败")
+
+                processed_count += 1
+                failed_file = None # Success, so reset the failed file variable
+
+        # This block runs only if the transaction for all files was successful
         total_operation_end_time = time.perf_counter()
         total_duration = total_operation_end_time - total_operation_start_time
 
         print(f"\n{GREEN}===== 导入完成 ====={RESET}")
-        print(f"成功导入文件数: {processed_count}")
-        print(f"失败导入文件数: 0")
+        print(f"成功导入文件数: {processed_count} / {total_files_to_process}")
         print("--------------------")
         print("计时统计:")
-        # MODIFICATION START
         print(f"  - 总耗时: {total_duration:.4f} 秒 ({total_duration * 1000:.2f} ms)")
         print(f"  - 文本解析总耗时: {total_parse_time:.4f} 秒 ({total_parse_time * 1000:.2f} ms)")
         print(f"  - 数据库插入总耗时: {total_db_time:.4f} 秒 ({total_db_time * 1000:.2f} ms)")
-        # MODIFICATION END
         
     except Exception as e:
-        # 如果发生异常导致事务回滚，此代码块将运行
+        # This block runs if any exception occurs, causing a rollback
         total_operation_end_time = time.perf_counter()
         total_duration = total_operation_end_time - total_operation_start_time
         
         print(f"\n{RED}===== 导入失败 ====={RESET}")
-        print(f"成功导入文件数: 0")
-        print(f"失败导入文件数: {total_files_to_process}")
-        print(f"操作因错误中止。错误详情: {e}")
+        print(f"操作因在处理文件 '{failed_file}' 时发生错误而中止。")
+        print(f"错误类型: {e}")
+        print("数据库已回滚，所有本次导入的数据均未保存。")
         print("--------------------")
-        print("计时统计:")
-        # MODIFICATION START
+        print(f"成功导入文件数: {processed_count} / {total_files_to_process}")
         print(f"操作中止前总耗时: {total_duration:.4f} 秒 ({total_duration * 1000:.2f} ms)")
-        # MODIFICATION END
 
 
 def main_app_loop():
@@ -155,7 +146,8 @@ def main_app_loop():
                     break
                 else:
                     print(f"{RED}输入错误, 请输入四位数字年份.{RESET}")
-            query_1(year_to_query)
+            # MODIFIED: Call the new function name
+            display_yearly_summary(year_to_query)
 
         elif choice == '2':
             now = datetime.datetime.now()
@@ -181,7 +173,8 @@ def main_app_loop():
                         print(f"{RED}输入的月份无效 (必须介于 01 到 12 之间).{RESET}")
                 else:
                     print(f"{RED}输入格式错误, 请输入6位数字, 例如 202503.{RESET}")
-            query_2(year_to_query, month_to_query)
+            # MODIFIED: Call the new function name
+            display_monthly_details(year_to_query, month_to_query)
 
         elif choice == '3':
             now = datetime.datetime.now()
@@ -207,7 +200,8 @@ def main_app_loop():
                         print(f"{RED}输入的月份无效 (必须介于 01 到 12 之间).{RESET}")
                 else:
                     print(f"{RED}输入格式错误, 请输入6位数字, 例如 202503.{RESET}")
-            query_3(year_to_export, month_to_export)
+            # MODIFIED: Call the new function name
+            export_monthly_bill_as_text(year_to_export, month_to_export)
 
         elif choice == '4':
             current_system_year = datetime.datetime.now().year
@@ -230,7 +224,8 @@ def main_app_loop():
                 if not parent_title_str:
                     print(f"{RED}父标题不能为空.{RESET}")
             
-            query_4(year_to_query_stats, parent_title_str)
+            # MODIFIED: Call the new function name
+            display_yearly_parent_category_summary(year_to_query_stats, parent_title_str)
             
         elif choice == '5':
             print("程序结束运行")

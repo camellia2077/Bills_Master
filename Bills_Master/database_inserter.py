@@ -49,6 +49,10 @@ def db_connection(db_name='bills.db'): # Allow db_name to be specified
         conn.close()
 
 def create_database(db_name='bills.db'):
+    """
+    Creates database schema. Returns True on success, False on failure.
+    """
+    # MODIFIED: Wrap in try-except to return boolean
     try:
         with db_connection(db_name) as conn:
             cursor = conn.cursor()
@@ -86,91 +90,103 @@ def create_database(db_name='bills.db'):
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_parent_ym ON Parent(year_month_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_child_parent ON Child(parent_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_item_child ON Item(child_id)')
+        # NEW: Return True on success
+        return True
     except sqlite3.Error as e:
-        # The error is re-raised for the caller to handle.
-        raise
+        # NEW: Print error and return False on failure
+        print(f"{RED}Error during database schema creation: {e}{RESET}")
+        return False
+
 
 def insert_data_stream(conn, data_stream):
     """
-    Processes a stream of structured data from the parser and inserts it into the database.
+    Processes a stream of structured data and inserts it into the database.
+    Returns True on success, False on failure.
     """
-    cursor = conn.cursor()
-    current_year_month_id = None
-    current_year_month_str = None # Needed for remarks
-    current_parent_id = None
-    current_child_id = None
-    items_batch = []
-    # Max items to batch before executing, to avoid holding too many in memory
-    # but still get some benefit from executemany
-    ITEM_BATCH_SIZE = 100
+    # MODIFIED: Wrap function body in try-except to return boolean
+    try:
+        cursor = conn.cursor()
+        current_year_month_id = None
+        current_year_month_str = None
+        current_parent_id = None
+        current_child_id = None
+        items_batch = []
+        ITEM_BATCH_SIZE = 100
 
-    for record in data_stream:
-        record_type = record['type']
-        line_num = record.get('line_num', 'N/A') # Get line number for error reporting
+        for record in data_stream:
+            record_type = record['type']
+            line_num = record.get('line_num', 'N/A')
 
-        try:
-            if record_type == 'year_month':
-                if items_batch: # Process any pending items from previous date block
-                    cursor.executemany(ITEM_UPSERT, items_batch)
-                    items_batch = []
-                current_year_month_str = record['value']
-                cursor.execute(YEAR_MONTH_INSERT, (current_year_month_str,))
-                cursor.execute(YEAR_MONTH_SELECT, (current_year_month_str,))
-                result = cursor.fetchone()
-                if not result:
-                    raise ValueError(f"Failed to insert/find YearMonth ID for {current_year_month_str}")
-                current_year_month_id = result[0]
-                current_parent_id = None # Reset context
-                current_child_id = None  # Reset context
+            try:
+                if record_type == 'year_month':
+                    if items_batch:
+                        cursor.executemany(ITEM_UPSERT, items_batch)
+                        items_batch = []
+                    current_year_month_str = record['value']
+                    cursor.execute(YEAR_MONTH_INSERT, (current_year_month_str,))
+                    cursor.execute(YEAR_MONTH_SELECT, (current_year_month_str,))
+                    result = cursor.fetchone()
+                    if not result:
+                        raise ValueError(f"Failed to insert/find YearMonth ID for {current_year_month_str}")
+                    current_year_month_id = result[0]
+                    current_parent_id = None
+                    current_child_id = None
 
-            elif record_type == 'remark':
-                if not record['year_month']: # Should have year_month context from parser
-                     raise ValueError(f"Remark '{record['text']}' found without associated DATE (line {line_num}).")
-                cursor.execute(YEAR_MONTH_UPDATE_REMARK, (record['text'], record['year_month']))
+                elif record_type == 'remark':
+                    if not record['year_month']:
+                         raise ValueError(f"Remark '{record['text']}' found without associated DATE (line {line_num}).")
+                    cursor.execute(YEAR_MONTH_UPDATE_REMARK, (record['text'], record['year_month']))
 
-            elif record_type == 'parent':
-                if not current_year_month_id:
-                    raise ValueError(f"Parent '{record['title']}' found without preceding DATE (line {line_num}).")
-                if items_batch: # Process pending items before switching parent
-                    cursor.executemany(ITEM_UPSERT, items_batch)
-                    items_batch = []
-                cursor.execute(PARENT_UPSERT, (current_year_month_id, record['title'], record['order_num']))
-                cursor.execute(PARENT_SELECT, (current_year_month_id, record['title']))
-                result = cursor.fetchone()
-                if not result:
-                    raise ValueError(f"Failed to get Parent ID for '{record['title']}' under YM_ID {current_year_month_id}")
-                current_parent_id = result[0]
-                current_child_id = None # Reset child context
+                elif record_type == 'parent':
+                    if not current_year_month_id:
+                        raise ValueError(f"Parent '{record['title']}' found without preceding DATE (line {line_num}).")
+                    if items_batch:
+                        cursor.executemany(ITEM_UPSERT, items_batch)
+                        items_batch = []
+                    cursor.execute(PARENT_UPSERT, (current_year_month_id, record['title'], record['order_num']))
+                    cursor.execute(PARENT_SELECT, (current_year_month_id, record['title']))
+                    result = cursor.fetchone()
+                    if not result:
+                        raise ValueError(f"Failed to get Parent ID for '{record['title']}' under YM_ID {current_year_month_id}")
+                    current_parent_id = result[0]
+                    current_child_id = None
 
-            elif record_type == 'child':
-                if not current_parent_id:
-                    raise ValueError(f"Child '{record['title']}' found without preceding PARENT (line {line_num}).")
-                if items_batch: # Process pending items before switching child
-                    cursor.executemany(ITEM_UPSERT, items_batch)
-                    items_batch = []
-                cursor.execute(CHILD_UPSERT, (current_parent_id, record['title'], record['order_num']))
-                cursor.execute(CHILD_SELECT, (current_parent_id, record['title']))
-                result = cursor.fetchone()
-                if not result:
-                    raise ValueError(f"Failed to get Child ID for '{record['title']}' under Parent_ID {current_parent_id}")
-                current_child_id = result[0]
+                elif record_type == 'child':
+                    if not current_parent_id:
+                        raise ValueError(f"Child '{record['title']}' found without preceding PARENT (line {line_num}).")
+                    if items_batch:
+                        cursor.executemany(ITEM_UPSERT, items_batch)
+                        items_batch = []
+                    cursor.execute(CHILD_UPSERT, (current_parent_id, record['title'], record['order_num']))
+                    cursor.execute(CHILD_SELECT, (current_parent_id, record['title']))
+                    result = cursor.fetchone()
+                    if not result:
+                        raise ValueError(f"Failed to get Child ID for '{record['title']}' under Parent_ID {current_parent_id}")
+                    current_child_id = result[0]
 
-            elif record_type == 'item':
-                if not current_child_id:
-                    raise ValueError(f"Item '{record['description']}' found without preceding CHILD (line {line_num}).")
-                items_batch.append((
-                    current_child_id,
-                    record['amount'],
-                    record['description'],
-                    record['order_num']
-                ))
-                if len(items_batch) >= ITEM_BATCH_SIZE:
-                    cursor.executemany(ITEM_UPSERT, items_batch)
-                    items_batch = []
-        except Exception as e:
-            # Augment error with line number if available
-            raise type(e)(f"Error processing record (approx. line {line_num}): {record}. Original error: {e}")
+                elif record_type == 'item':
+                    if not current_child_id:
+                        raise ValueError(f"Item '{record['description']}' found without preceding CHILD (line {line_num}).")
+                    items_batch.append((
+                        current_child_id,
+                        record['amount'],
+                        record['description'],
+                        record['order_num']
+                    ))
+                    if len(items_batch) >= ITEM_BATCH_SIZE:
+                        cursor.executemany(ITEM_UPSERT, items_batch)
+                        items_batch = []
+            except Exception as e:
+                raise type(e)(f"Error processing record (approx. line {line_num}): {record}. Original error: {e}")
 
-    # After the loop, process any remaining items in the batch
-    if items_batch:
-        cursor.executemany(ITEM_UPSERT, items_batch)
+        if items_batch:
+            cursor.executemany(ITEM_UPSERT, items_batch)
+        
+        # NEW: Return True on success
+        return True
+
+    except Exception as e:
+        # NEW: Print error and return False on failure
+        # The error message will be detailed thanks to the inner exception handler
+        print(f"{RED}Database insertion process failed. Error: {e}{RESET}")
+        return False
