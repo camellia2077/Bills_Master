@@ -26,8 +26,6 @@ def _transform_config_for_validation(config_data):
     return validation_map
 
 # --- 核心验证逻辑函数 (保持不变) ---
-# _read_and_preprocess, _validate_date_and_remark, _handle_parent_state, 
-# _handle_sub_state, _handle_content_state, _process_lines, _post_validation_checks
 # 这些函数完全不需要任何修改，因为我们将配置转换回了它们期望的格式。
 def _read_and_preprocess(file_path):
     """逐行读取文件并预处理行"""

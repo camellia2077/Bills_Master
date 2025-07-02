@@ -1,19 +1,24 @@
-# bill_modifier.py (已更新日志功能)
+
 
 import re
 import os
 import shutil
 import decimal
+import json
 
-# --- 模块配置 (无变动) ---
-AUTO_RENEWAL_MAP = {
-    "web_service": [
-        (decimal.Decimal("25.0"), "迅雷加速器"),
-    ],
-}
+# --- 内部核心功能函数 (已更新) ---
 
-# --- 内部核心功能函数 (无变动) ---
+def _load_config(config_path):
+    """(新增) 通用配置加载函数。"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # 如果文件不存在或格式错误，返回空字典，让调用方处理
+        return {}
+
 def _sum_up_line(line):
+    # ... 此函数代码无变化 ...
     match = re.match(r'^((?:\d+(?:\.\d+)?)(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*(.*)$', line)
     if match:
         numeric_part = match.group(1)
@@ -28,7 +33,9 @@ def _sum_up_line(line):
             return None, None
     return None, None
 
-def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal):
+
+def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal, renewal_rules):
+    # ... 此函数逻辑无变化，仅依赖传入的 renewal_rules ...
     if not os.path.exists(file_path):
         return {'modified': False, 'log': [], 'error': f"文件不存在: {file_path}"}
     txt_modified = False
@@ -54,11 +61,13 @@ def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal
                 original_stripped = original_line.strip()
                 if re.fullmatch(r'^[a-z]+(_[a-z]+)+$', original_stripped):
                     current_child_title = original_stripped
-                    if enable_autorenewal and current_child_title in AUTO_RENEWAL_MAP:
-                        items_to_add = AUTO_RENEWAL_MAP[current_child_title]
-                        for amount, description in items_to_add:
+                    if enable_autorenewal and current_child_title in renewal_rules:
+                        items_to_add = renewal_rules[current_child_title]
+                        for item in items_to_add:
+                            amount = decimal.Decimal(str(item.get('amount', 0)))
+                            description = item.get('description', '未知项目')
                             auto_renewal_desc_txt = description + "(自动续费)"
-                            amount_str = format(decimal.Decimal(amount).normalize(), 'f')
+                            amount_str = format(amount.normalize(), 'f')
                             line_to_insert = f"{amount_str}{auto_renewal_desc_txt}"
                             if line_to_insert not in all_content_str:
                                 outfile.write(line_to_insert + '\n')
@@ -77,6 +86,7 @@ def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal
         return {'modified': False, 'log': log, 'error': f"处理文件时发生意外错误: {e}"}
 
 def _get_line_type(line):
+    # ... 此函数代码无变化 ...
     stripped = line.strip()
     if not stripped: return 'BLANK', stripped
     if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+[\d]*$', stripped): return 'PARENT', stripped
@@ -84,14 +94,18 @@ def _get_line_type(line):
     if re.match(r'^\d+(?:\.\d*)?', stripped): return 'CONTENT', stripped
     return 'OTHER', stripped
 
-# --- 功能函数 (已更新日志) ---
-def _cleanup_empty_items(file_path):
-    """(已更新) 清理文件中的空项目，并返回详细的清理日志。"""
+def _get_numeric_value_from_content(line_content):
+    # ... 此函数代码无变化 ...
+    match = re.match(r'^(\d+(?:\.\d*)?)', line_content.strip())
+    return decimal.Decimal(match.group(1)) if match else decimal.Decimal('-1')
+
+def _process_structured_modifications(file_path, enable_cleanup, enable_sorting):
+    # ... 此函数代码无变化 ...
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         original_content = "".join(lines)
-        
+        log = []
         bill_structure = []
         current_parent_node, current_sub_node = None, None
         for line in lines:
@@ -113,39 +127,57 @@ def _cleanup_empty_items(file_path):
             else:
                 bill_structure.append({'type': 'OTHER', 'content': line})
                 current_parent_node, current_sub_node = None, None
-
-        # !!!核心改动: 在过滤时记录被删除项!!!
-        deleted_subs, deleted_parents = [], []
-        
-        # 步骤2A: 识别并收集空的子项目
-        for node in bill_structure:
-            if node['type'] == 'PARENT':
-                kept_children = []
-                for sub_node in node.get('children', []):
+        if enable_sorting:
+            sorted_subs_count = 0
+            for node in bill_structure:
+                sub_nodes = []
+                if node['type'] == 'PARENT':
+                    sub_nodes = node.get('children', [])
+                elif node['type'] == 'SUB':
+                    sub_nodes = [node]
+                for sub_node in sub_nodes:
                     if sub_node.get('children'):
-                        kept_children.append(sub_node)
+                        sub_node['children'].sort(
+                            key=lambda item: (
+                                -_get_numeric_value_from_content(item['content']),
+                                item['content']
+                            )
+                        )
+                        sorted_subs_count += 1
+            if sorted_subs_count > 0:
+                log.append(f"对 {sorted_subs_count} 个子项目的内容进行了排序。")
+        deleted_subs, deleted_parents = [], []
+        if enable_cleanup:
+            for node in bill_structure:
+                if node['type'] == 'PARENT':
+                    kept_children = []
+                    for sub_node in node.get('children', []):
+                        if sub_node.get('children'):
+                            kept_children.append(sub_node)
+                        else:
+                            deleted_subs.append(sub_node['content'].strip())
+                    node['children'] = kept_children
+                elif node['type'] == 'SUB' and not node.get('children'):
+                    deleted_subs.append(node['content'].strip())
+            final_structure_after_cleanup = []
+            for node in bill_structure:
+                if node['type'] == 'PARENT':
+                    if node.get('children'):
+                        final_structure_after_cleanup.append(node)
                     else:
-                        deleted_subs.append(sub_node['content'].strip())
-                node['children'] = kept_children
-            elif node['type'] == 'SUB' and not node.get('children'): # 处理孤立的空子项
-                deleted_subs.append(node['content'].strip())
-
-        # 步骤2B: 过滤结构，收集空的父项目
-        final_structure = []
-        for node in bill_structure:
-            if node['type'] == 'PARENT':
-                if node.get('children'):
-                    final_structure.append(node)
+                        deleted_parents.append(node['content'].strip())
+                elif node['type'] == 'SUB':
+                    if node.get('children'):
+                        final_structure_after_cleanup.append(node)
                 else:
-                    deleted_parents.append(node['content'].strip())
-            elif node['type'] == 'SUB': # 处理孤立的子项
-                if node.get('children'):
-                    final_structure.append(node)
-            else:
-                final_structure.append(node)
-        
+                    final_structure_after_cleanup.append(node)
+            bill_structure = final_structure_after_cleanup
+            if deleted_subs:
+                log.append(f"删除了空子项目: {', '.join(deleted_subs)}")
+            if deleted_parents:
+                log.append(f"删除了空父项目: {', '.join(deleted_parents)}")
         new_lines = []
-        for node in final_structure:
+        for node in bill_structure:
             new_lines.append(node['content'])
             if node.get('children'):
                 for child_node in node['children']:
@@ -154,49 +186,49 @@ def _cleanup_empty_items(file_path):
                         for content_node in child_node['children']:
                             new_lines.append(content_node['content'])
         new_content = "".join(new_lines)
-        
         if new_content != original_content:
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            
-            # 步骤4: 生成详细日志
-            cleanup_log = []
-            if deleted_subs:
-                cleanup_log.append(f"删除了空子项目: {', '.join(deleted_subs)}")
-            if deleted_parents:
-                cleanup_log.append(f"删除了空父项目: {', '.join(deleted_parents)}")
-            
-            # 如果日志为空但文件被修改了（例如，只删了空行），提供通用消息
-            if not cleanup_log:
-                cleanup_log.append("成功清理了文件中的空行或格式。")
-            
-            return True, cleanup_log
+            if not log:
+                log.append("成功更新了文件格式。")
+            return True, log
         else:
-            return False, []
-
+            return False, log
     except Exception as e:
-        raise Exception(f"清理空项目时出错: {e}")
+        raise Exception(f"执行结构化修改时出错: {e}")
 
-# --- 公开的API函数 (无变动) ---
-def process_single_file(file_path, enable_summing, enable_autorenewal, enable_cleanup):
+# --- 公开的API函数 (已更新) ---
+def process_single_file(file_path, modifier_config_path, enable_summing, enable_autorenewal, enable_cleanup, enable_sorting):
+    """(已更新) 处理单个文件，按顺序执行启用的所有修改功能。"""
     overall_modified = False
     log = []
-    if enable_summing or enable_autorenewal:
+
+    # 从指定的修改器配置文件加载规则
+    config = _load_config(modifier_config_path)
+    renewal_rules = config.get('auto_renewal_rules', {})
+
+    # 阶段1: 行内修改 (求和, 自动续费)
+    if enable_summing or (enable_autorenewal and renewal_rules):
         try:
-            stage1_result = _perform_initial_modifications(file_path, enable_summing, enable_autorenewal)
-            if stage1_result['error']:
-                return stage1_result
-            overall_modified = overall_modified or stage1_result['modified']
+            stage1_result = _perform_initial_modifications(
+                file_path, enable_summing, enable_autorenewal, renewal_rules
+            )
+            if stage1_result['error']: return stage1_result
+            overall_modified = stage1_result['modified']
             log.extend(stage1_result['log'])
         except Exception as e:
             return {'modified': False, 'log': log, 'error': str(e)}
-    if enable_cleanup:
+
+    # 阶段2: 结构化修改 (排序, 清理)
+    if enable_cleanup or enable_sorting:
         try:
-            cleanup_modified, cleanup_log = _cleanup_empty_items(file_path)
-            overall_modified = overall_modified or cleanup_modified
-            log.extend(cleanup_log)
+            modified, stage2_log = _process_structured_modifications(file_path, enable_cleanup, enable_sorting)
+            overall_modified = overall_modified or modified
+            log.extend(stage2_log)
         except Exception as e:
             return {'modified': overall_modified, 'log': log, 'error': str(e)}
-    if not overall_modified:
+    
+    if not overall_modified and not any(log):
         log.append(f"文件 {os.path.basename(file_path)} 未作任何修改。")
+    
     return {'modified': overall_modified, 'log': list(dict.fromkeys(log)), 'error': None}
