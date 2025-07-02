@@ -5,7 +5,7 @@ import decimal
 import json
 from .status_logger import log_info, log_error
 
-# _load_config, _sum_up_line, _get_line_type, _get_numeric_value_from_content 保持不变
+# _load_config, _sum_up_line, and _get_numeric_value_from_content remain unchanged
 def _load_config(config_path):
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -27,18 +27,24 @@ def _sum_up_line(line):
             return None, None
     return None, None
 
-def _get_line_type(line):
+def _get_numeric_value_from_content(line_content):
+    match = re.match(r'^(\d+(?:\.\d*)?)', line_content.strip())
+    return decimal.Decimal(match.group(1)) if match else decimal.Decimal('-1')
+
+
+# --- MODIFIED: Added metadata_prefixes parameter ---
+def _get_line_type(line, metadata_prefixes=None):
+    """Classifies a line based on its format and metadata prefixes."""
     stripped = line.strip()
+    if metadata_prefixes:
+        for prefix in metadata_prefixes:
+            if stripped.startswith(prefix):
+                return 'METADATA', stripped
     if not stripped: return 'BLANK', stripped
     if re.fullmatch(r'^[A-Z]+[\u4e00-\u9fff]+[\d]*$', stripped): return 'PARENT', stripped
     if re.fullmatch(r'^[a-z]+(?:_[a-z]+)+$', stripped): return 'SUB', stripped
     if re.match(r'^\d+(?:\.\d*)?', stripped): return 'CONTENT', stripped
     return 'OTHER', stripped
-
-def _get_numeric_value_from_content(line_content):
-    match = re.match(r'^(\d+(?:\.\d*)?)', line_content.strip())
-    return decimal.Decimal(match.group(1)) if match else decimal.Decimal('-1')
-
 
 
 def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal, renewal_rules):
@@ -88,7 +94,7 @@ def _perform_initial_modifications(file_path, enable_summing, enable_autorenewal
         log_error(f"An unexpected error occurred during initial modifications: {e}")
         return False
 
-# _reconstruct_content_with_formatting 保持不变
+# --- MODIFIED: Added handling for METADATA type ---
 def _reconstruct_content_with_formatting(bill_structure, formatting_rules):
     lines_after_parent_section = formatting_rules.get('lines_after_parent_section', 2)
     lines_after_parent_title = formatting_rules.get('lines_after_parent_title', 1)
@@ -97,6 +103,9 @@ def _reconstruct_content_with_formatting(bill_structure, formatting_rules):
     num_top_nodes = len(bill_structure)
     for i, node in enumerate(bill_structure):
         node_type = node.get('type')
+        if node_type == 'METADATA':
+            output_lines.append(node['content'].strip())
+            continue
         if node_type != 'PARENT':
             output_lines.append(node['content'].strip())
             continue
@@ -116,15 +125,18 @@ def _reconstruct_content_with_formatting(bill_structure, formatting_rules):
     return '\n'.join(output_lines) + '\n'
 
 
-# --- NEW: Function to parse lines into a structured representation ---
-def _build_bill_structure(lines):
+# --- MODIFIED: Added metadata_prefixes parameter and METADATA type handling ---
+def _build_bill_structure(lines, metadata_prefixes=None):
     """Parses a list of lines into a hierarchical bill structure."""
     bill_structure, current_parent_node, current_sub_node = [], None, None
     processed_lines = [line for line in lines if line.strip()]
 
     for line in processed_lines:
-        line_type, _ = _get_line_type(line)
-        if line_type == 'PARENT':
+        line_type, _ = _get_line_type(line, metadata_prefixes)
+        if line_type == 'METADATA':
+            bill_structure.append({'type': 'METADATA', 'content': line})
+            # Do not reset parent/sub context
+        elif line_type == 'PARENT':
             current_parent_node = {'type': 'PARENT', 'content': line, 'children': []}
             bill_structure.append(current_parent_node)
             current_sub_node = None
@@ -142,17 +154,15 @@ def _build_bill_structure(lines):
             
     return bill_structure
 
-# --- NEW: Function to sort sub-items within the bill structure ---
+# _sort_bill_structure and _cleanup_bill_structure remain unchanged
 def _sort_bill_structure(bill_structure):
     """Sorts content within each sub-item of the bill structure."""
     sorted_subs_count = 0
     for node in bill_structure:
-        # Determine which nodes have sortable children (PARENT or SUB)
         sub_nodes = []
         if node['type'] == 'PARENT':
             sub_nodes = node.get('children', [])
         elif node['type'] == 'SUB':
-            # Handle SUB nodes that might not be under a PARENT
             sub_nodes = [node]
         
         for sub_node in sub_nodes:
@@ -162,28 +172,22 @@ def _sort_bill_structure(bill_structure):
     if sorted_subs_count > 0:
         log_info(f"Sorted content for {sorted_subs_count} sub-items.")
 
-# --- NEW: Function to clean up empty items from the bill structure ---
 def _cleanup_bill_structure(bill_structure):
     """Removes empty parent and sub-items from the bill structure."""
     original_count = len(bill_structure)
     
-    # First, remove empty sub-items from parents
     for node in bill_structure:
         if node['type'] == 'PARENT':
             children = node.get('children', [])
             deleted_subs = [child['content'].strip() for child in children if not child.get('children')]
-            # Keep only children that have their own children (content)
             node['children'] = [child for child in children if child.get('children')]
             if deleted_subs:
                 log_info(f"Deleted empty sub-items: {', '.join(deleted_subs)}")
 
-    # Now, create a new structure without empty nodes
     final_structure = []
     for node in bill_structure:
-        # Keep node if it's not a PARENT without children
         if node['type'] == 'PARENT' and not node.get('children'):
             continue
-        # Keep node if it's not a SUB without children
         if node['type'] == 'SUB' and not node.get('children'):
             continue
         final_structure.append(node)
@@ -194,7 +198,7 @@ def _cleanup_bill_structure(bill_structure):
     return final_structure
 
 
-# --- REFACTORED: This function is now a coordinator ---
+# --- MODIFIED: Reads metadata flags from config and passes them down ---
 def _process_structured_modifications(file_path, enable_cleanup, enable_sorting, config):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -204,8 +208,13 @@ def _process_structured_modifications(file_path, enable_cleanup, enable_sorting,
         if not original_content.strip():
             return True
 
+        flags = config.get('modification_flags', {})
+        metadata_prefixes = None
+        if flags.get('preserve_metadata_lines', False):
+            metadata_prefixes = config.get('metadata_prefixes', [])
+
         # 1. Build the structure from lines
-        bill_structure = _build_bill_structure(original_lines)
+        bill_structure = _build_bill_structure(original_lines, metadata_prefixes)
         
         # 2. Apply sorting if enabled
         if enable_sorting:
@@ -215,7 +224,7 @@ def _process_structured_modifications(file_path, enable_cleanup, enable_sorting,
         if enable_cleanup:
             bill_structure = _cleanup_bill_structure(bill_structure)
 
-        # 4. Reconstruct the file content from the (potentially modified) structure
+        # 4. Reconstruct the file content
         formatting_rules = config.get('formatting_rules', {})
         new_content = _reconstruct_content_with_formatting(bill_structure, formatting_rules)
         
@@ -228,7 +237,7 @@ def _process_structured_modifications(file_path, enable_cleanup, enable_sorting,
         log_error(f"An unexpected error occurred during structured modifications: {e}")
         return False
 
-# process_single_file 保持不变
+# --- MODIFIED: Reads new flag and calls structured modifications if needed ---
 def process_single_file(file_path: str, modifier_config_path: str) -> bool:
     config = _load_config(modifier_config_path)
     flags = config.get('modification_flags', {})
@@ -236,18 +245,20 @@ def process_single_file(file_path: str, modifier_config_path: str) -> bool:
     enable_autorenewal = flags.get('enable_autorenewal', False)
     enable_cleanup = flags.get('enable_cleanup', False)
     enable_sorting = flags.get('enable_sorting', False)
+    preserve_metadata_lines = flags.get('preserve_metadata_lines', False)
     renewal_rules = config.get('auto_renewal_rules', {})
     
     log_info(f"Summing: {'Enabled' if enable_summing else 'Disabled'}")
     log_info(f"Auto-renewal: {'Enabled' if enable_autorenewal else 'Disabled'}")
     log_info(f"Cleanup: {'Enabled' if enable_cleanup else 'Disabled'}")
     log_info(f"Sorting: {'Enabled' if enable_sorting else 'Disabled'}")
+    log_info(f"Preserve Metadata: {'Enabled' if preserve_metadata_lines else 'Disabled'}")
 
     if enable_summing or (enable_autorenewal and renewal_rules):
         if not _perform_initial_modifications(file_path, enable_summing, enable_autorenewal, renewal_rules): 
             return False
             
-    if enable_cleanup or enable_sorting:
+    if enable_cleanup or enable_sorting or preserve_metadata_lines:
         if not _process_structured_modifications(file_path, enable_cleanup, enable_sorting, config): 
             return False
             

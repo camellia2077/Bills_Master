@@ -1,0 +1,103 @@
+{
+  "categories": [
+    {
+      "parent_item": "MEAL吃饭",
+      "description": "与餐饮相关的消费",
+      "sub_items": [
+        "meal_low",
+        "meal_high",
+        "meal_snacks",
+        "meal_fruits",
+        "meal_drinks"
+      ]
+    },
+    {
+      "parent_item": "FITNESS健身",
+      "description": "与健身相关的消费",
+      "sub_items": [
+        "fitness_supplies",
+        "fitness_equipments",
+        "fitness_diet"
+      ]
+    },
+    {
+      "parent_item": "WEB网络",
+      "description": "与互联网服务和内容相关的消费",
+      "sub_items": [
+        "web_game",
+        "web_service",
+        "web_donates",
+        "web_sources"
+      ]
+    },
+    {
+      "parent_item": "PURCHASE购物",
+      "description": "日常购物开销",
+      "sub_items": [
+        "purchase_toys",
+        "purchase_shoes",
+        "purchase_digitals",
+        "purchase_clothes"
+      ]
+    },
+    {
+      "parent_item": "DAILY日常",
+      "description": "日常杂项和固定费用",
+      "sub_items": [
+        "daily_consumables",
+        "daily_fees",
+        "daily_others"
+      ]
+    },
+    {
+      "parent_item": "PET宠物",
+      "description": "与宠物相关的开销",
+      "sub_items": [
+        "pet_fish",
+        "pet_equipments",
+        "pet_fodder",
+        "pet_plants",
+        "pet_tortoise",
+        "pet_cats",
+        "pet_medicines"
+      ]
+    },
+    {
+      "parent_item": "TRIP出行",
+      "description": "交通和出行费用",
+      "sub_items": [
+        "trip_bus",
+        "trip_train",
+        "trip_taxi"
+      ]
+    },
+    {
+      "parent_item": "DRESS女装",
+      "description": "服饰和个人装扮",
+      "sub_items": [
+        "dress_enamel",
+        "dress_socks",
+        "dress_shoes",
+        "dress_sextoy",
+        "dress_clothes"
+      ]
+    },
+    {
+      "parent_item": "OTHER其他",
+      "description": "其他无法明确分类的开销",
+      "sub_items": [
+        "other_travels",
+        "other_gifts",
+        "other_accidents"
+      ]
+    },
+    {
+      "parent_item": "HOSPITAL医院",
+      "description": "医疗和药品开销",
+      "sub_items": [
+        "hospital_tooth",
+        "hospital_drugs"
+      ]
+    }
+  ]
+}
